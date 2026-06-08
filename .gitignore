@@ -1,0 +1,46 @@
+# --- Secrets and user state (NEVER commit) ---
+
+# Discord Client ID/Secret, HF token, OAuth tokens
+config.json
+
+# User audio recordings and transcripts
+Recordings/
+
+# --- Build artifacts ---
+.venv/
+build/
+dist/
+*.spec.bak
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- Per-user agent / editor scratch state ---
+.claude/
+.cursor/
+.aider*
+.continue/
+.windsurf/
+.opencode/
+.codeium/
+CLAUDE.md
+AGENTS.md
+OPENCODE.md
+.cursorrules
+.github/copilot-instructions.md
+

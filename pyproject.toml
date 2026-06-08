@@ -1,0 +1,86 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mynah"
+description = "Record Discord voice calls and transcribe them locally with accurate per-speaker labels — no bot, nothing leaves your machine."
+requires-python = ">=3.10,<3.14"
+readme = "README.md"
+dynamic = ["version"]
+dependencies = [
+    "numpy>=1.24",
+    # Windows-only audio + IPC stack. The app refuses to record without
+    # these (WASAPI loopback + named-pipe RPC), so they're hard-pinned to
+    # win32 here to keep `pip install` clean on Linux/macOS dev machines.
+    "PyAudioWPatch>=0.2.12.7; sys_platform == 'win32'",
+    "pywin32>=306; sys_platform == 'win32'",
+    "requests>=2.31",
+    "imageio-ffmpeg>=0.5",  # bundles a Windows ffmpeg binary so whisperx works
+    "scipy>=1.10",          # used by audio.py resampling and transcription
+    "soundfile>=0.12",      # used by transcription.py to read stereo channels
+    # OS credential store wrapper (issue #14). Pure-Python on PyPI;
+    # the wincred backend on Windows is part of the standard `keyring`
+    # distribution, so no extra install step is needed at runtime.
+    # Without this declaration the keyring import fails and every
+    # secret silently falls back to plaintext config.json, defeating
+    # the #14 security goal.
+    "keyring>=24,<27",
+]
+
+[project.optional-dependencies]
+# Transcription deps must be installed out of band because of the CUDA
+# wheel index URL on the torch wheels. The bootstrap script (start.ps1)
+# does this for users; for manual installs, see:
+#   pip install --extra-index-url https://download.pytorch.org/whl/cu126 \
+#       "torch==2.8.0" "torchaudio==2.8.0" "torchvision==0.23.0"
+#   pip install "whisperx==3.8.6"
+# whisperx 3.8.6 (pinned) declares torch~=2.8.0 / torchvision~=0.23.0; keep
+# the torch pins above in sync when bumping whisperx.
+#
+# this project intentionally ships WITHOUT a lock
+# file (no poetry.lock / requirements.txt / Pipfile.lock). Reasons:
+# (1) the largest dependencies (torch, whisperx, ctranslate2) are
+#     installed from a CUDA-specific wheel index that pip-tools cannot
+#     resolve cleanly alongside PyPI deps — the transcription = []
+#     extras-group documents this gap and the bootstrap script
+#     materialises the actual install plan;
+# (2) the public release SBOM (`build.py` generate_sbom) is derived
+#     from `importlib.metadata.distributions()` at build time, scoped
+#     to the runtime closure that `_project_runtime_closure()` reads
+#     from `[project].dependencies` here plus the
+#     `Mynah.spec` bundled-package list — that artifact is
+#     the project's pinned-version-of-record for downstream scanners.
+# Adding a lock file would split the source of truth between this
+# manifest, the lock file, the start.ps1 install sequence, and the
+# SBOM, increasing drift risk for marginal reproducibility benefit.
+transcription = []
+build = [
+    "pyinstaller>=6.3",
+    # tomllib lives in the stdlib from 3.11 onward; on 3.10 the build
+    # script falls back to `tomli` for SBOM closure parsing. Without
+    # this declaration on a 3.10 build host the closure walk silently
+    # returns None and the SBOM falls back to enumerating the entire
+    # dev interpreter (the regression closure was meant to close).
+    "tomli>=2.0; python_version < '3.11'",
+    # `build.py:_marker_excludes` uses
+    # `packaging.markers.Marker` to evaluate PEP 508 environment
+    # markers in the SBOM closure walk. `packaging` is vendored by
+    # pip in `pip._vendor.packaging`, but that is an internal API —
+    # standalone `packaging` is the public surface. The import is
+    # already wrapped in try/except so the build does not crash if
+    # this is absent, but the fallback degrades to a less precise
+    # SBOM that includes platform-conditional deps even when their
+    # markers exclude the current host. Declaring it explicitly here
+    # makes the build-time contract explicit.
+    "packaging>=23",
+]
+
+[project.scripts]
+mynah = "mynah.app:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "mynah.__version__" }
