@@ -73,6 +73,7 @@ produced alongside the transcript.
 | Resource | Minimum | Recommended | Notes |
 |---|---|---|---|
 | **OS** | Windows 10 1903+ | Windows 11 | WASAPI loopback + named-pipe IPC. No Linux/Mac support. |
+| **WebView2 Runtime** | — | — | Renders the UI; preinstalled on Windows 11 and current Windows 10. If it's genuinely missing the app falls back to a basic legacy UI ([download](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)). |
 | **CPU** | Any 64-bit, last decade | Modern | The GPU does the heavy lifting during transcription. |
 | **RAM** | 8 GB | 16 GB | Whisper `large-v3` peaks around 5 GB. |
 | **GPU** | None (CPU works) | NVIDIA RTX 20-series or newer, 6 GB+ VRAM | CPU transcription is ~10× slower than realtime. NVIDIA only (CUDA). |
@@ -117,8 +118,8 @@ identity. **This is not a bot** — we don't go anywhere near the Bot tab.
    - If you don't see this tab, the `AUTHORIZE` step on first connect may
      return "RPC is not approved" — Discord's gating policy varies per
      account/app age. If that happens, the app will report it clearly.
-5. Launch the recorder, open **Edit → Settings**, paste both values, click
-   **Save**.
+5. Launch the recorder, open **Settings** (gear icon, top right), paste
+   both values, click **Save**.
 
 The first time you click **Connect to Discord**, the Discord desktop app
 will pop an **Authorize** prompt — accept it. The resulting access/refresh
@@ -165,7 +166,7 @@ To enable speaker labels for non-Discord recordings:
    - <https://huggingface.co/pyannote/segmentation-3.0>
 3. Generate a **Read**-scope token at
    <https://huggingface.co/settings/tokens>.
-4. Paste it into **Edit → Settings → HF Token**.
+4. Paste it into **Settings → HF token**.
 
 You can skip this and add it later — it only matters at transcription time.
 
@@ -175,16 +176,22 @@ You can skip this and add it later — it only matters at transcription time.
 
 1. Join a Discord voice channel.
 2. Run `.\start.ps1` (or double-click the `.exe` once you've built it).
-3. **Connect to Discord** → confirm participants show up in the status panel.
+3. **Connect to Discord** → confirm participants show up in the
+   **Transport** panel.
 4. Optionally type a meeting name.
-5. **● Start Recording** → have your call → **■ Stop Recording**.
-6. The new recording auto-selects in the **Recording** dropdown; click
+5. Click the round **record** button (a consent prompt appears first) →
+   have your call → click **stop**.
+6. The new recording auto-selects in the **Archive** list; click
    **Transcribe selected** when you're ready (this is the slow step —
    runs Whisper on your GPU).
 
+The UI follows your system light/dark theme; cycle system → light →
+dark with the toggle next to the settings gear. If you prefer the old
+Tkinter interface, launch with `--legacy-ui`.
+
 ### Audio source
 
-In **Edit → Settings → Audio Source**, choose what to capture:
+In **Settings → Audio source**, choose what to capture:
 
 | Setting | What it records | When to use it |
 |---|---|---|
@@ -201,7 +208,7 @@ the default playback device (so audio that Discord plays through your
 speakers/headset ends up on the right channel of the recording). If
 Discord is routed to a different output — common when you have
 multiple HDMI sinks or a separate headset on a USB dongle — open
-**Edit → Settings → Loopback device** and pick the one that's actually
+**Settings → Loopback device** and pick the one that's actually
 carrying Discord's audio. The dropdown lists every WASAPI loopback the
 system exposes; duplicates (e.g. two HDMI sinks reporting the same
 name) get a `(#N)` suffix and the current Windows default is tagged
@@ -255,8 +262,8 @@ Fill it in manually:
 }
 ```
 
-Then pick the recording from the dropdown and re-run **Transcribe
-selected**.
+Then pick the recording from the **Archive** list and re-run
+**Transcribe selected**.
 
 ---
 
@@ -303,8 +310,12 @@ transcription and stay cached after that.
 ├── pyproject.toml              # package metadata + deps
 ├── README.md
 └── src/mynah/
-    ├── app.py                  # entry point
-    ├── gui.py                  # Tkinter MainWindow + SettingsDialog
+    ├── app.py                  # entry point (web UI default, Tk fallback)
+    ├── webui.py                # pywebview window lifecycle (WebView2)
+    ├── backend.py              # web UI backend: JS bridge + state machine
+    ├── web/                    # frontend assets (HTML/CSS/JS, no frameworks)
+    ├── gui.py                  # legacy Tkinter UI (run with --legacy-ui)
+    ├── uicore.py               # UI-agnostic core shared by both UIs
     ├── recorder.py             # RecordingSession (audio + participant polling)
     ├── audio.py                # mic + WASAPI loopback capture (PyAudioWPatch)
     ├── rpc.py                  # Discord RPC + full OAuth flow
@@ -420,13 +431,22 @@ unfortunately Discord's policy here varies and isn't documented.
 ### "No participants found"
 
 You're connected to RPC but not actually in a voice channel. Join one in
-Discord first, then click **Refresh Participants**.
+Discord first, then click **Refresh**.
 
 ### CUDA: False in the sanity check
 
 Your NVIDIA driver is too old, or you have an AMD/Intel GPU. Update the
 driver via GeForce Experience and re-run `.\start.ps1`. Transcription will
 fall back to CPU otherwise — works, but slow.
+
+### App opens as a plain gray window instead of the dark UI
+
+The app fell back to the legacy Tkinter interface because pywebview or
+the WebView2 runtime isn't available. Re-run `.\start.ps1` (installs
+pywebview into the venv) and, if the log mentions WebView2, install the
+[Microsoft Edge WebView2 runtime](https://developer.microsoft.com/en-us/microsoft-edge/webview2/)
+— it's preinstalled on Windows 11 and current Windows 10, so this
+mostly affects stripped-down or very old installs.
 
 ### `Mynah.exe` crashes silently on launch
 
@@ -447,7 +467,7 @@ Deletes the `.venv` and rebuilds from scratch. Your `config.json` and
 ### Speaker labels are wrong / log says "Falling back to pyannote"
 
 The app's primary path on Discord is the `SPEAKING_*` event subscription.
-You should see this in the log when you click **Start Recording**:
+You should see this in the console pane when you start a recording:
 
 ```
 INFO Subscribed to SPEAKING_START/STOP for channel <id>
