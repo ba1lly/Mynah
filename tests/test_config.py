@@ -199,10 +199,13 @@ class TestMigrationWithKeyring:
 
         cfg = config_module.Config.load()
 
-        assert cfg.discord_client_secret == "legacy-secret"
         assert cfg.hf_token == "hf_legacy"
-        assert store[(secrets_store.SERVICE_NAME, "discord-client-secret")] == "legacy-secret"
         assert store[(secrets_store.SERVICE_NAME, "huggingface-token")] == "hf_legacy"
+        # PKCE (issue #1): a legacy plaintext Client Secret is DROPPED,
+        # not migrated — the OAuth flow no longer uses one.
+        assert (
+            secrets_store.SERVICE_NAME, "discord-client-secret",
+        ) not in store
 
         on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
         assert "discord_client_secret" not in on_disk
@@ -354,11 +357,11 @@ class TestShadowFieldsV27:
     so future fields coincidentally prefixed `_legacy_` would be
     persisted correctly."""
 
-    def test_shadow_fields_includes_all_three_legacy_shadows(
+    def test_shadow_fields_includes_all_legacy_shadows(
         self, config_module,
     ) -> None:
+        # _legacy_client_secret was removed in the PKCE migration (#1).
         assert config_module._SHADOW_FIELDS == frozenset({
-            "_legacy_client_secret",
             "_legacy_hf_token",
             "_legacy_token",
         })
@@ -392,7 +395,6 @@ class TestConfigCreateFactoryF19:
 
         assert cfg.discord_client_id == "id1"
         assert cfg.whisper_model == "large-v3"
-        assert cfg.discord_client_secret == ""
 
     def test_create_with_secrets_routes_through_setters(
         self, config_module, monkeypatch: pytest.MonkeyPatch,
@@ -401,7 +403,6 @@ class TestConfigCreateFactoryF19:
 
         cfg = config_module.Config.create(
             discord_client_id="id1",
-            discord_client_secret="topsecret",
             hf_token="hf_tok",
             token=config_module.OAuthToken(
                 access_token="at", refresh_token="rt", expires_at=99.0,
@@ -409,7 +410,6 @@ class TestConfigCreateFactoryF19:
         )
 
         assert cfg.discord_client_id == "id1"
-        assert store[(secrets_store.SERVICE_NAME, "discord-client-secret")] == "topsecret"
         assert store[(secrets_store.SERVICE_NAME, "huggingface-token")] == "hf_tok"
         assert (
             secrets_store.SERVICE_NAME, "discord-token",
@@ -430,16 +430,17 @@ class TestMigrateLegacySecretsHelperV31:
 
         migrated, any_failure = config_module._migrate_legacy_secrets(
             cfg,
-            legacy_client_secret="cs",
             legacy_hf_token="hf",
-            legacy_token_obj=None,
+            legacy_token_obj=config_module.OAuthToken(
+                access_token="at", refresh_token="rt", expires_at=99.0,
+            ),
         )
 
         assert any_failure is False
         assert len(migrated) == 2
         keys = [m[0] for m in migrated]
-        assert secrets_store.KEY_DISCORD_CLIENT_SECRET in keys
         assert secrets_store.KEY_HUGGINGFACE_TOKEN in keys
+        assert secrets_store.KEY_DISCORD_TOKEN in keys
 
     def test_helper_records_write_failure(
         self, config_module, monkeypatch: pytest.MonkeyPatch,
@@ -460,14 +461,13 @@ class TestMigrateLegacySecretsHelperV31:
 
         migrated, any_failure = config_module._migrate_legacy_secrets(
             cfg,
-            legacy_client_secret="cs",
-            legacy_hf_token="",
+            legacy_hf_token="hf",
             legacy_token_obj=None,
         )
 
         assert migrated == []
         assert any_failure is True
-        assert cfg._legacy_client_secret == "cs"
+        assert cfg._legacy_hf_token == "hf"
 
 
 class TestMigrationFallbackWhenKeyringUnavailable:
@@ -490,17 +490,17 @@ class TestMigrationFallbackWhenKeyringUnavailable:
 
         cfg = config_module.Config.load()
 
-        # The properties still surface the values (from the _legacy_*
+        # The property still surfaces the value (from the _legacy_*
         # in-memory shadow that load() populated).
-        assert cfg.discord_client_secret == "legacy-secret"
         assert cfg.hf_token == "hf_legacy"
 
-        # And the on-disk JSON still carries them, because keyring
+        # And the on-disk JSON still carries it, because keyring
         # storage isn't available on this install. This is the
-        # documented graceful-fallback path.
+        # documented graceful-fallback path. The legacy Client Secret
+        # is gone either way — PKCE needs no secret (#1).
         cfg.save()
         on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
-        assert on_disk["discord_client_secret"] == "legacy-secret"
+        assert "discord_client_secret" not in on_disk
         assert on_disk["hf_token"] == "hf_legacy"
 
 
@@ -532,11 +532,11 @@ class TestMigrationWriteFailureDoesNotPersistPlaintext:
 
         cfg = config_module.Config()
         with pytest.raises(secrets_store.SecretWriteError):
-            cfg.discord_client_secret = "should-not-be-persisted"
+            cfg.hf_token = "should-not-be-persisted"
 
         # Critical: the legacy shadow stayed empty, so a follow-up
         # save() would NOT write the value to plaintext config.json.
-        assert cfg._legacy_client_secret == ""
+        assert cfg._legacy_hf_token == ""
 
     def test_migration_save_failure_rolls_back_keyring_writes(
         self, config_module, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
@@ -598,8 +598,8 @@ class TestMigrationWriteFailureDoesNotPersistPlaintext:
         fake.get_password = lambda s, u: store.get((s, u))
 
         def _set(s, u, p):
-            if u == "huggingface-token":
-                raise RuntimeError("backend rejected hf_token write")
+            if u == "discord-token":
+                raise RuntimeError("backend rejected token write")
             store[(s, u)] = p
 
         def _delete(s, u):
@@ -616,23 +616,27 @@ class TestMigrationWriteFailureDoesNotPersistPlaintext:
 
         original_plaintext = json.dumps({
             "discord_client_id": "id1",
-            "discord_client_secret": "live-secret",
             "hf_token": "live-hf",
             "audio_source": "mixed",
             "whisper_model": "large-v3-turbo",
+            "token": {
+                "access_token": "a", "refresh_token": "r", "expires_at": 1.0,
+            },
         })
         (tmp_path / "config.json").write_text(original_plaintext, encoding="utf-8")
 
         with caplog.at_level("WARNING"):
             config_module.Config.load()
 
-        assert (
-            secrets_store.SERVICE_NAME,
-            "discord-client-secret",
-        ) not in store
+        # hf write succeeded but must be rolled back after the token
+        # write failed, so no key from this attempt remains in keyring.
         assert (
             secrets_store.SERVICE_NAME,
             "huggingface-token",
+        ) not in store
+        assert (
+            secrets_store.SERVICE_NAME,
+            "discord-token",
         ) not in store
 
         on_disk = (tmp_path / "config.json").read_text(encoding="utf-8")
@@ -670,7 +674,6 @@ class TestMigrationWriteFailureDoesNotPersistPlaintext:
         with caplog.at_level("WARNING"):
             cfg = config_module.Config.load()
 
-        assert cfg.discord_client_secret == "live-secret"
         assert cfg.hf_token == "live-hf"
 
         messages = [r.message.lower() for r in caplog.records]
@@ -690,9 +693,9 @@ class TestMigrationWriteFailureDoesNotPersistPlaintext:
     ) -> None:
         """a prior successful migration writes
         hf_token to keyring (then strips it from config.json). A LATER
-        migration of a different secret (discord_client_secret only)
-        must NOT delete that pre-existing hf_token entry on rollback —
-        the rollback must touch only what this attempt actually wrote."""
+        migration of a different secret (the OAuth token only) must NOT
+        delete that pre-existing hf_token entry on rollback — the
+        rollback must touch only what this attempt actually wrote."""
         store = _install_fake_keyring(monkeypatch)
 
         store[(secrets_store.SERVICE_NAME, "huggingface-token")] = "pre-existing-hf"
@@ -700,9 +703,12 @@ class TestMigrationWriteFailureDoesNotPersistPlaintext:
         (tmp_path / "config.json").write_text(
             json.dumps({
                 "discord_client_id": "id1",
-                "discord_client_secret": "new-secret",
                 "audio_source": "mixed",
                 "whisper_model": "large-v3-turbo",
+                "token": {
+                    "access_token": "a", "refresh_token": "r",
+                    "expires_at": 1.0,
+                },
             }),
             encoding="utf-8",
         )
@@ -722,7 +728,7 @@ class TestMigrationWriteFailureDoesNotPersistPlaintext:
         ] == "pre-existing-hf"
         assert (
             secrets_store.SERVICE_NAME,
-            "discord-client-secret",
+            "discord-token",
         ) not in store
 
     def test_rollback_restores_legacy_shadows_for_in_session_access(
@@ -738,7 +744,6 @@ class TestMigrationWriteFailureDoesNotPersistPlaintext:
         (tmp_path / "config.json").write_text(
             json.dumps({
                 "discord_client_id": "id1",
-                "discord_client_secret": "live-secret",
                 "hf_token": "live-hf",
                 "audio_source": "mixed",
                 "whisper_model": "large-v3-turbo",
@@ -752,9 +757,7 @@ class TestMigrationWriteFailureDoesNotPersistPlaintext:
         monkeypatch.setattr(config_module.Config, "save", fail_save)
         cfg = config_module.Config.load()
 
-        assert cfg.discord_client_secret == "live-secret"
         assert cfg.hf_token == "live-hf"
-        assert cfg._legacy_client_secret == "live-secret"
         assert cfg._legacy_hf_token == "live-hf"
 
     def test_migration_with_write_failure_leaves_original_json_intact(
@@ -783,7 +786,6 @@ class TestMigrationWriteFailureDoesNotPersistPlaintext:
 
         original = json.dumps({
             "discord_client_id": "id1",
-            "discord_client_secret": "legacy-secret",
             "hf_token": "hf_legacy",
             "audio_source": "mixed",
             "whisper_model": "large-v3-turbo",
@@ -792,15 +794,13 @@ class TestMigrationWriteFailureDoesNotPersistPlaintext:
 
         cfg = config_module.Config.load()
 
-        # The values are recoverable from the in-memory shadow (load
-        # stashed them after the write failure), so the user's
+        # The value is recoverable from the in-memory shadow (load
+        # stashed it after the write failure), so the user's
         # credentials are not lost mid-session.
-        assert cfg._legacy_client_secret == "legacy-secret"
         assert cfg._legacy_hf_token == "hf_legacy"
 
         # And the on-disk JSON still contains the original plaintext
         # — no save() ran. The migration will retry on next launch
         # rather than losing the credentials entirely.
         on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
-        assert on_disk["discord_client_secret"] == "legacy-secret"
         assert on_disk["hf_token"] == "hf_legacy"

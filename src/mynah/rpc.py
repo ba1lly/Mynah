@@ -27,9 +27,12 @@ pipe after a liveness timeout, which manifests as the recorder appearing to
 """
 from __future__ import annotations
 
+import base64
+import hashlib
 import json
 import logging
 import os
+import secrets
 import struct
 import threading
 import time
@@ -129,15 +132,15 @@ class DiscordRPC:
     PING = 3
     PONG = 4
 
-    def __init__(self, client_id: str, client_secret: str):
-        if not client_id or not client_secret:
+    def __init__(self, client_id: str):
+        if not client_id:
             raise RpcError(
-                "Discord client_id and client_secret are required. Create an "
-                "application at https://discord.com/developers/applications and "
-                "enter them in Settings."
+                "Discord client_id is required. Create an application at "
+                "https://discord.com/developers/applications, enable "
+                "'Public Client' on its OAuth2 tab, and enter the Client ID "
+                "in Settings."
             )
         self.client_id = client_id
-        self.client_secret = client_secret
         self.pipe = None
         self.connected = False
         self.authenticated = False
@@ -1068,26 +1071,98 @@ class DiscordRPC:
             if self.authenticated:
                 self._start_reader()
 
-    def _authorize(self) -> dict:
-        log.info("Requesting AUTHORIZE — accept the prompt in Discord")
-        data = self._cmd("AUTHORIZE", {"client_id": self.client_id, "scopes": SCOPES}, timeout=120.0)
-        code = data.get("code")
-        if not code:
-            raise RpcError("AUTHORIZE returned no code")
+    @staticmethod
+    def _make_pkce_pair() -> tuple[str, str]:
+        """RFC 7636 code_verifier + S256 code_challenge.
+
+        token_urlsafe(64) yields ~86 chars from the unreserved set,
+        comfortably inside the spec's 43–128 char window. The challenge
+        is the base64url-encoded SHA-256 of the verifier with padding
+        stripped — the only method Discord supports is S256.
+        """
+        verifier = secrets.token_urlsafe(64)
+        challenge = (
+            base64.urlsafe_b64encode(hashlib.sha256(verifier.encode("ascii")).digest())
+            .rstrip(b"=")
+            .decode("ascii")
+        )
+        return verifier, challenge
+
+    def _post_token(self, form: dict, context: str) -> dict:
+        """POST to the OAuth token endpoint with a PKCE-aware error path.
+
+        A 401 `invalid_client` here almost always means the Discord
+        application doesn't have 'Public Client' enabled — without that
+        flag Discord refuses secret-less token exchange even when the
+        PKCE parameters are correct. Surface that as actionable text
+        instead of a bare HTTPError.
+        """
         resp = requests.post(
             OAUTH_TOKEN_URL,
-            data={
-                "client_id": self.client_id,
-                "client_secret": self.client_secret,
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": REDIRECT_URI,
-            },
+            data=form,
             headers={"Content-Type": "application/x-www-form-urlencoded"},
             timeout=15,
         )
+        if resp.status_code in (400, 401):
+            try:
+                err = resp.json().get("error", "")
+            except Exception:
+                err = ""
+            if err == "invalid_client":
+                raise RpcError(
+                    f"Discord rejected the {context} (invalid_client). "
+                    "Open your application's OAuth2 tab at "
+                    "https://discord.com/developers/applications and enable "
+                    "'Public Client', then try again."
+                )
         resp.raise_for_status()
-        body = resp.json()
+        return resp.json()
+
+    def _authorize(self) -> dict:
+        log.info("Requesting AUTHORIZE — accept the prompt in Discord")
+        # PKCE (RFC 7636) replaces the client_secret of the pre-1.1 flow:
+        # the token exchange below proves possession of the verifier whose
+        # hash Discord bound to the authorization code, so a stolen code
+        # is useless on its own (issue #1).
+        verifier, challenge = self._make_pkce_pair()
+        state = secrets.token_urlsafe(32)
+        data = self._cmd(
+            "AUTHORIZE",
+            {
+                "client_id": self.client_id,
+                "scopes": SCOPES,
+                "code_challenge": challenge,
+                "code_challenge_method": "S256",
+                "state": state,
+            },
+            timeout=120.0,
+        )
+        # Discord's RPC AUTHORIZE response is documented to return only
+        # {"code": ...} — it accepts `state` but does not currently echo
+        # it. Enforce the match strictly IF a state comes back (a wrong
+        # one is a code-substitution red flag), but tolerate absence:
+        # hard-requiring it would break every connect, and on a local
+        # pipe the PKCE verifier is what actually prevents an attacker
+        # from redeeming a substituted code.
+        echoed_state = data.get("state")
+        if echoed_state is not None and echoed_state != state:
+            raise RpcError(
+                "AUTHORIZE state mismatch (possible code-substitution "
+                "attack); refusing to exchange the code."
+            )
+        code = data.get("code")
+        if not code:
+            raise RpcError("AUTHORIZE returned no code")
+        body = self._post_token(
+            {
+                "client_id": self.client_id,
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": REDIRECT_URI,
+                "code_verifier": verifier,
+            },
+            context="PKCE token exchange",
+        )
         try:
             return {
                 "access_token": body["access_token"],
@@ -1098,19 +1173,16 @@ class DiscordRPC:
             raise RpcError(f"OAuth response missing required field {e!s}")
 
     def _refresh_token(self, refresh_token: str) -> dict:
-        resp = requests.post(
-            OAUTH_TOKEN_URL,
-            data={
+        # Public-client refresh: client_id only, no secret. Requires the
+        # same 'Public Client' application flag as the code exchange.
+        body = self._post_token(
+            {
                 "client_id": self.client_id,
-                "client_secret": self.client_secret,
                 "grant_type": "refresh_token",
                 "refresh_token": refresh_token,
             },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
-            timeout=15,
+            context="token refresh",
         )
-        resp.raise_for_status()
-        body = resp.json()
         try:
             return {
                 "access_token": body["access_token"],

@@ -4,6 +4,21 @@ All notable changes to Mynah are documented here.
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] — 2026-06-11
+
+### Changed
+
+- **Security: Discord OAuth migrated to PKCE (#1)** — the app no longer
+  asks for, sends, or stores a Client Secret. The RPC `AUTHORIZE` now
+  carries an S256 `code_challenge` + `state`, the token exchange and
+  refresh prove possession of the `code_verifier` instead of a secret,
+  and the Settings dialogs drop the Client Secret field. A secret stored
+  by an older version is removed from the OS credential store on launch,
+  and a plaintext one in a legacy `config.json` is discarded on load.
+  **Setup change:** enable **Public Client** on your Discord
+  application's OAuth2 tab (one-time); the "Reset Secret" step is gone
+  from the README.
+
 ## [1.0.1] — 2026-06-11
 
 ### Added
@@ -50,5 +65,6 @@ First public release.
 - ~10 GB of disk for Python deps + Whisper weights; ~15 GB recommended.
 - Python 3.10–3.13 for dev mode; not needed for the `.exe` build.
 
+[1.1.0]: https://github.com/ba1lly/Mynah/releases/tag/v1.1.0
 [1.0.1]: https://github.com/ba1lly/Mynah/releases/tag/v1.0.1
 [1.0.0]: https://github.com/ba1lly/Mynah/releases/tag/v1.0.0

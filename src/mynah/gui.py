@@ -107,10 +107,12 @@ class SettingsDialog(tk.Toplevel):
         self.client_id.insert(0, config.discord_client_id)
         row += 1
 
-        ttk.Label(frm, text="Client Secret:").grid(row=row, column=0, sticky=tk.W, pady=3)
-        self.client_secret = ttk.Entry(frm, width=48, show="•")
-        self.client_secret.grid(row=row, column=1, columnspan=2, pady=3)
-        self.client_secret.insert(0, config.discord_client_secret)
+        ttk.Label(
+            frm,
+            text="No Client Secret needed — enable 'Public Client' on the\n"
+                 "application's OAuth2 tab (the app authenticates with PKCE).",
+            foreground="#666",
+        ).grid(row=row, column=0, columnspan=3, sticky=tk.W, pady=3)
         row += 1
 
         ttk.Separator(frm, orient=tk.HORIZONTAL).grid(
@@ -220,7 +222,6 @@ class SettingsDialog(tk.Toplevel):
         c = self.config_obj
         new_values = {
             "discord_client_id": self.client_id.get().strip(),
-            "discord_client_secret": self.client_secret.get().strip(),
             "hf_token": self.hf_token.get().strip(),
             "whisper_model": (
                 self.whisper_model.get().strip() or "large-v3-turbo"
@@ -409,8 +410,8 @@ class MainWindow:
             import pyaudiowpatch  # noqa: F401
         except ImportError:
             log.error("PyAudioWPatch missing — install with: pip install PyAudioWPatch")
-        if not self.config.discord_client_id or not self.config.discord_client_secret:
-            log.warning("Discord credentials not configured. Open Edit → Settings.")
+        if not self.config.discord_client_id:
+            log.warning("Discord Client ID not configured. Open Edit → Settings.")
 
     # ---- background-task plumbing ----
 
@@ -505,10 +506,10 @@ class MainWindow:
         self.statusbar.config(text=_scrub(text))
 
     def _connect(self) -> None:
-        if not self.config.discord_client_id or not self.config.discord_client_secret:
+        if not self.config.discord_client_id:
             messagebox.showwarning(
                 "Configuration required",
-                "Please set your Discord Client ID and Client Secret in Settings first.",
+                "Please set your Discord Client ID in Settings first.",
             )
             self._open_settings()
             return
@@ -517,7 +518,6 @@ class MainWindow:
         self.connect_btn.config(state=tk.DISABLED)
 
         client_id = self.config.discord_client_id
-        client_secret = self.config.discord_client_secret
         existing_token = asdict(self.config.token) if self.config.token else None
 
         def task():
@@ -525,7 +525,7 @@ class MainWindow:
             # connect() succeeds. This prevents the (previously real) race
             # where _refresh_participants / _start_recording could observe a
             # half-initialised DiscordRPC during the connect window.
-            rpc = DiscordRPC(client_id, client_secret)
+            rpc = DiscordRPC(client_id)
             new_token = rpc.connect(existing_token=existing_token)
             return rpc, new_token
 

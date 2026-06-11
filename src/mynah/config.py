@@ -42,6 +42,10 @@ _DEFAULT_WHISPER_MODEL = "large-v3-turbo"
 # truth for the .bad-backup secret-scrubber and the start.ps1 -Build
 # dist-config keep-list assertion.
 _SECRET_FIELDS = frozenset({
+    # discord_client_secret is no longer used (PKCE, issue #1) but stays
+    # in this set so the .bad-backup scrubber keeps redacting it from
+    # legacy configs and the start.ps1 keep-list assertion keeps
+    # rejecting it from dist configs.
     "discord_client_secret",
     "hf_token",
     "token",
@@ -57,7 +61,6 @@ _SECRET_FIELDS = frozenset({
 # IDE-discoverable, and the dataclass field definitions reference this
 # set in a class-body sanity check at import time.
 _SHADOW_FIELDS = frozenset({
-    "_legacy_client_secret",
     "_legacy_hf_token",
     "_legacy_token",
 })
@@ -131,9 +134,31 @@ def _scrub_and_backup_corrupted_config(
         log.warning("Could not move corrupted config aside: %s", e)
 
 
+def _drop_legacy_client_secret() -> None:
+    """One-time cleanup for the PKCE migration (issue #1).
+
+    Pre-PKCE versions stored the Discord Client Secret in the OS
+    credential store. The secret is no longer used anywhere — keeping
+    it readable by any same-user process is pure attack surface, so
+    delete it on sight. Cheap no-op once gone (get returns None).
+    """
+    try:
+        if secrets_store.get_secret(secrets_store.KEY_DISCORD_CLIENT_SECRET):
+            secrets_store.delete_secret(secrets_store.KEY_DISCORD_CLIENT_SECRET)
+            log.info(
+                "Removed stored Discord Client Secret: no longer needed — "
+                "the app now uses PKCE (no secret required)."
+            )
+    except secrets_store.SecretWriteError as e:
+        log.warning(
+            "Could not remove the obsolete Discord Client Secret from the "
+            "OS credential store (%s); you can delete it manually via "
+            "Credential Manager.", e,
+        )
+
+
 def _migrate_legacy_secrets(
     cfg: "Config",
-    legacy_client_secret: str,
     legacy_hf_token: str,
     legacy_token_obj: Optional["OAuthToken"],
 ) -> tuple[list[tuple[str, str, object]], bool]:
@@ -160,18 +185,6 @@ def _migrate_legacy_secrets(
     migrated: list[tuple[str, str, object]] = []
     any_failure = False
 
-    if legacy_client_secret:
-        try:
-            cfg.discord_client_secret = legacy_client_secret
-            migrated.append((
-                secrets_store.KEY_DISCORD_CLIENT_SECRET,
-                "_legacy_client_secret",
-                legacy_client_secret,
-            ))
-        except secrets_store.SecretWriteError as e:
-            log.error("Migration of discord_client_secret failed: %s", e)
-            cfg._legacy_client_secret = legacy_client_secret
-            any_failure = True
     if legacy_hf_token:
         try:
             cfg.hf_token = legacy_hf_token
@@ -216,15 +229,16 @@ class Config:
 
     Persistence split (issue #14):
       - Non-sensitive fields below are written verbatim to config.json.
-      - Secrets (client_secret, hf_token, OAuth token) are accessed via
-        the `discord_client_secret` / `hf_token` / `token` properties,
-        which read from the OS credential store when available and
-        fall back to the in-memory `_legacy_*` shadow fields populated
-        by `Config.load()` for installs without a keyring backend.
+      - Secrets (hf_token, OAuth token) are accessed via the `hf_token`
+        / `token` properties, which read from the OS credential store
+        when available and fall back to the in-memory `_legacy_*`
+        shadow fields populated by `Config.load()` for installs
+        without a keyring backend.
 
     Direct attribute access to the secret properties looks identical
-    to the pre-#14 API — `cfg.discord_client_secret`, `cfg.hf_token`,
-    `cfg.token` — so call sites need not change.
+    to the pre-#14 API — `cfg.hf_token`, `cfg.token` — so call sites
+    need not change. (`discord_client_secret` was removed in the PKCE
+    migration, issue #1.)
     """
 
     discord_client_id: str = ""
@@ -249,7 +263,6 @@ class Config:
     # for the secrets — `save()` writes them back to config.json with a
     # loud warning so the operator knows credentials are at rest in
     # cleartext.
-    _legacy_client_secret: str = field(default="", repr=False)
     _legacy_hf_token: str = field(default="", repr=False)
     _legacy_token: Optional[OAuthToken] = field(default=None, repr=False)
 
@@ -263,34 +276,8 @@ class Config:
             self.whisper_model = _DEFAULT_WHISPER_MODEL
 
     # ---- secret accessors ----------------------------------------------------
-
-    @property
-    def discord_client_secret(self) -> str:
-        stored = secrets_store.get_secret(
-            secrets_store.KEY_DISCORD_CLIENT_SECRET,
-        )
-        if stored is not None:
-            return stored
-        return self._legacy_client_secret
-
-    @discord_client_secret.setter
-    def discord_client_secret(self, value: str) -> None:
-        value = value or ""
-        # set_secret raises SecretWriteError if keyring IS available
-        # but the backend write failed. Let it propagate — the GUI/CLI
-        # caller surfaces the error and keeps the previous value. We
-        # must NOT silently populate _legacy_client_secret on a write
-        # failure: that would persist plaintext to disk on the next
-        # save() with only a log warning (the #14 regression flagged
-        #). A False return means keyring is
-        # genuinely unavailable on this install — the intentional
-        # plaintext fallback.
-        if secrets_store.set_secret(
-            secrets_store.KEY_DISCORD_CLIENT_SECRET, value,
-        ):
-            self._legacy_client_secret = ""
-        else:
-            self._legacy_client_secret = value
+    # (discord_client_secret was removed in the PKCE migration, issue #1 —
+    # the OAuth flow no longer uses a secret at all.)
 
     @property
     def hf_token(self) -> str:
@@ -302,9 +289,14 @@ class Config:
     @hf_token.setter
     def hf_token(self, value: str) -> None:
         value = value or ""
-        # See discord_client_secret.setter for the rationale: a
-        # SecretWriteError must propagate, not silently downgrade to
-        # plaintext.
+        # set_secret raises SecretWriteError if keyring IS available but
+        # the backend write failed. Let it propagate — the UI caller
+        # surfaces the error and keeps the previous value. We must NOT
+        # silently populate the legacy shadow on a write failure: that
+        # would persist plaintext to disk on the next save() with only a
+        # log warning (the #14 regression). A False return means keyring
+        # is genuinely unavailable on this install — the intentional
+        # plaintext fallback.
         if secrets_store.set_secret(
             secrets_store.KEY_HUGGINGFACE_TOKEN, value,
         ):
@@ -348,8 +340,8 @@ class Config:
             self._legacy_token = None
             return
         encoded = json.dumps(asdict(value))
-        # See discord_client_secret.setter for the SecretWriteError
-        # propagation rationale.
+        # See hf_token.setter for the SecretWriteError propagation
+        # rationale.
         if secrets_store.set_secret(secrets_store.KEY_DISCORD_TOKEN, encoded):
             self._legacy_token = None
         else:
@@ -363,7 +355,6 @@ class Config:
         recordings_dir: Optional[str] = None,
         whisper_model: str = _DEFAULT_WHISPER_MODEL,
         audio_source: str = "mixed",
-        discord_client_secret: str = "",
         hf_token: str = "",
         token: Optional[OAuthToken] = None,
     ) -> "Config":
@@ -372,7 +363,7 @@ class Config:
         the dataclass `__init__` only accepts
         non-secret fields because the secret values are exposed via
         property setters that route through the OS credential store —
-        `Config(discord_client_secret="...")` raises `TypeError`. Tests
+        `Config(hf_token="...")` raises `TypeError`. Tests
         and scripts that need a fully-populated Config previously had
         to construct first and then assign every secret separately,
         which is asymmetric with `load()` (which accepts a full JSON
@@ -393,8 +384,6 @@ class Config:
             whisper_model=whisper_model,
             audio_source=audio_source,
         )
-        if discord_client_secret:
-            cfg.discord_client_secret = discord_client_secret
         if hf_token:
             cfg.hf_token = hf_token
         if token is not None:
@@ -403,6 +392,11 @@ class Config:
 
     @classmethod
     def load(cls) -> "Config":
+        # PKCE migration (issue #1): a Client Secret stored by a pre-PKCE
+        # version is dead weight in the credential store — remove it
+        # unconditionally, including on the fresh-config paths below.
+        _drop_legacy_client_secret()
+
         if not CONFIG_PATH.exists():
             cfg = cls()
             cfg.save()
@@ -439,10 +433,16 @@ class Config:
             return cfg
 
         # Lift any legacy secrets out of the JSON BEFORE constructing the
-        # Config so they never appear as dataclass fields. They will be
-        # migrated into the OS credential store (or held in the
-        # `_legacy_*` shadows as a fallback) after construction.
-        legacy_client_secret = str(raw.pop("discord_client_secret", "") or "")
+        # Config so they never appear as dataclass fields. The HF token
+        # and OAuth token are migrated into the OS credential store (or
+        # held in the `_legacy_*` shadows as a fallback); a plaintext
+        # Client Secret from a pre-PKCE config is simply discarded —
+        # the OAuth flow no longer uses one (issue #1).
+        if raw.pop("discord_client_secret", None):
+            log.info(
+                "Dropping discord_client_secret from config.json: the app "
+                "now authenticates with PKCE and needs no Client Secret."
+            )
         legacy_hf_token = str(raw.pop("hf_token", "") or "")
         legacy_token_raw = raw.pop("token", None)
 
@@ -491,7 +491,6 @@ class Config:
         # `cfg.save()` call.
         migrated_writes, any_write_failure = _migrate_legacy_secrets(
             cfg,
-            legacy_client_secret,
             legacy_hf_token,
             legacy_token_obj,
         )
@@ -626,8 +625,6 @@ class Config:
             for f in fields(self)
             if f.name not in _SHADOW_FIELDS
         }
-        if self._legacy_client_secret:
-            d["discord_client_secret"] = self._legacy_client_secret
         if self._legacy_hf_token:
             d["hf_token"] = self._legacy_hf_token
         # only persist a legacy token that has a

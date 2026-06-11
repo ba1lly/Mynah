@@ -10,7 +10,7 @@ from mynah.rpc import DiscordRPC
 
 def _make_rpc() -> DiscordRPC:
     """Construct a DiscordRPC instance without actually opening a pipe."""
-    rpc = DiscordRPC("client_id", "client_secret")
+    rpc = DiscordRPC("client_id")
     rpc._cmd = MagicMock(name="_cmd")  # type: ignore[assignment]
     return rpc
 
