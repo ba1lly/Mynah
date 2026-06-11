@@ -72,6 +72,7 @@ datas: list = [
     # Web UI assets, resolved at runtime as Path(webui.__file__).parent/"web"
     # — placing them under mynah/web keeps dev and frozen layouts identical.
     ("src/mynah/web", "mynah/web"),
+    ("src/mynah/assets", "mynah/assets"),
 ]
 binaries: list = []
 hiddenimports: list = [
@@ -187,7 +188,7 @@ exe = EXE(
     upx=False,
     console=False,
     disable_windowed_traceback=False,
-    icon=None,
+    icon="src/mynah/assets/mynah.ico",
 )
 
 coll = COLLECT(

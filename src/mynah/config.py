@@ -69,10 +69,18 @@ _SHADOW_FIELDS = frozenset({
 def app_root() -> Path:
     """The directory the user thinks of as 'where the app lives'.
 
+    - MYNAH_APP_ROOT env var, when set: the bootstrap-installer layout
+      (issue #9). There the package lives in <install>\\python\\Lib\\
+      site-packages, so neither heuristic below lands anywhere a user
+      would look for config.json/Recordings; the installer's launcher
+      sets the env var to the install dir before importing mynah.
     - In a PyInstaller build: the folder containing Mynah.exe.
     - In dev (running run.py or python -m mynah): the project root
       (the parent of src/).
     """
+    override = os.environ.get("MYNAH_APP_ROOT")
+    if override:
+        return Path(override)
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parents[2]
@@ -255,6 +263,11 @@ class Config:
     # AudioRecorder.start() falls back to the Windows default with a
     # WARNING so the recording still proceeds.
     loopback_device_name: str = ""
+    # Query the GitHub releases API once per launch (and on demand) to
+    # surface new versions in the UI. The ONLY phone-home in the app —
+    # documented in the README privacy section, off-switchable here and
+    # in Settings, and it sends nothing but the HTTP request itself.
+    check_updates: bool = True
 
     # In-memory shadow of the secret values. Populated by `load()` from
     # the OS credential store on every launch (or from legacy config.json

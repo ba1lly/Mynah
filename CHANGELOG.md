@@ -4,6 +4,39 @@ All notable changes to Mynah are documented here.
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] — 2026-06-11
+
+### Added
+
+- **One-click installer (#9)** — every release now ships `MynahSetup.exe`
+  (~11 MB): pick a folder, click Install. It downloads a self-contained
+  Python runtime, detects your NVIDIA driver to choose CUDA or CPU
+  PyTorch automatically, installs the full stack into
+  `%LOCALAPPDATA%\Mynah`, and creates Start Menu / Desktop shortcuts.
+  Interrupted installs resume (per-step state + HTTP range-resume on
+  downloads). No Python, Git, or PowerShell required.
+- App icon — window title bar, taskbar, shortcuts, and both `.exe`s now
+  use the Mynah mark instead of default icons.
+- `MYNAH_APP_ROOT` environment override for `app_root()`, used by the
+  installer's launcher so `config.json` and `Recordings\` live in the
+  install folder.
+- Release workflow: pushing a version tag builds `MynahSetup.exe` on CI
+  and attaches it (plus a SHA-256 checksum file) to the GitHub release.
+- **Proper uninstall** — installer-based installs register in Windows
+  "Apps & features"; uninstalling from there removes the app, shortcuts,
+  and registry entry, with a prompt to keep or delete your recordings
+  and settings.
+- **Update notifications** — the app checks GitHub's releases API on
+  launch (Settings toggle, on by default, documented in the README
+  privacy section). A newer version shows an UPDATE badge in the top
+  bar; clicking it shows the release notes and links to the download
+  page. Settings also has a manual "Check now" button.
+
+### Fixed
+
+- Fatal-error dialog now falls back to the native Win32 message box when
+  tkinter is unavailable (the installer's runtime ships without it).
+
 ## [1.1.0] — 2026-06-11
 
 ### Changed
@@ -65,6 +98,7 @@ First public release.
 - ~10 GB of disk for Python deps + Whisper weights; ~15 GB recommended.
 - Python 3.10–3.13 for dev mode; not needed for the `.exe` build.
 
+[1.2.0]: https://github.com/ba1lly/Mynah/releases/tag/v1.2.0
 [1.1.0]: https://github.com/ba1lly/Mynah/releases/tag/v1.1.0
 [1.0.1]: https://github.com/ba1lly/Mynah/releases/tag/v1.0.1
 [1.0.0]: https://github.com/ba1lly/Mynah/releases/tag/v1.0.0

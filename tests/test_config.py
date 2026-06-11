@@ -804,3 +804,24 @@ class TestMigrationWriteFailureDoesNotPersistPlaintext:
         # rather than losing the credentials entirely.
         on_disk = json.loads((tmp_path / "config.json").read_text(encoding="utf-8"))
         assert on_disk["hf_token"] == "hf_legacy"
+
+
+class TestAppRootOverride:
+    """MYNAH_APP_ROOT env override (issue #9): the bootstrap-installed
+    app runs from site-packages, where neither the frozen-exe nor the
+    dev heuristic produces a sensible app root."""
+
+    def test_env_override_wins(
+        self, config_module, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        target = tmp_path / "install-here"
+        monkeypatch.setenv("MYNAH_APP_ROOT", str(target))
+        assert config_module.app_root() == target
+
+    def test_no_override_uses_heuristics(
+        self, config_module, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("MYNAH_APP_ROOT", raising=False)
+        root = config_module.app_root()
+        # Dev checkout: project root (parent of src/).
+        assert (root / "src").exists() or getattr(sys, "frozen", False)

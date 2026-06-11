@@ -7,6 +7,7 @@ gui.py remains available via --legacy-ui.
 from __future__ import annotations
 
 import logging
+import sys
 from pathlib import Path
 
 from . import __version__
@@ -24,6 +25,46 @@ def _web_asset(name: str) -> Path:
     one expression covers both layouts.
     """
     return Path(__file__).resolve().parent / "web" / name
+
+
+def _apply_windows_branding(window) -> None:
+    """Make the window/taskbar show the Mynah icon on Windows.
+
+    In the frozen build the exe's own icon covers this, but the
+    bootstrap-installed app runs under pythonw.exe — without these two
+    calls the taskbar shows the Python rocket. Both are best-effort.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    try:
+        # Stop the taskbar from grouping us under pythonw.exe's identity.
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            "ba1lly.Mynah"
+        )
+    except Exception:
+        pass
+
+    def _set_icon(*_args) -> None:
+        try:
+            ico = Path(__file__).resolve().parent / "assets" / "mynah.ico"
+            if not ico.exists():
+                return
+            hwnd = ctypes.windll.user32.FindWindowW(None, window.title)
+            if not hwnd:
+                return
+            IMAGE_ICON, LR_LOADFROMFILE, WM_SETICON = 1, 0x10, 0x80
+            for which, dim in ((0, 16), (1, 32)):  # ICON_SMALL, ICON_BIG
+                hicon = ctypes.windll.user32.LoadImageW(
+                    None, str(ico), IMAGE_ICON, dim, dim, LR_LOADFROMFILE,
+                )
+                if hicon:
+                    ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, which, hicon)
+        except Exception:
+            log.debug("Could not apply window icon", exc_info=True)
+
+    window.events.shown += _set_icon
 
 
 def _wire_logging(backend: MynahBackend) -> None:
@@ -67,9 +108,11 @@ def run() -> int:
     )
     backend._attach_window(window)
     window.events.closing += backend._on_window_closing
+    _apply_windows_branding(window)
 
     _wire_logging(backend)
     backend._start_environment_check()
+    backend._start_update_check()
 
     # Force the Chromium-based backend: pywebview's MSHTML fallback is the
     # IE engine and cannot render the frontend. WebView2 ships with

@@ -151,6 +151,28 @@ body::after {
 
 .topbar-right { display: flex; align-items: center; gap: 14px; }
 
+.update-pill {
+  font-family: var(--font-display);
+  font-stretch: condensed;
+  font-weight: 700;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent);
+  border-radius: 99px;
+  padding: 4px 12px;
+  cursor: pointer;
+  animation: pill-glow 2.2s ease-in-out infinite;
+}
+.update-pill:hover { background: var(--accent); color: var(--accent-ink); }
+@keyframes pill-glow {
+  50% { box-shadow: 0 0 10px var(--accent-soft); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .update-pill { animation: none; }
+}
+
 .led-cluster {
   display: flex;
   gap: 14px;
@@ -701,6 +723,33 @@ select.input { cursor: pointer; }
 }
 
 .consent-text { white-space: pre-wrap; }
+
+.release-notes {
+  max-height: 280px;
+  overflow-y: auto;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--muted);
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  border-radius: var(--r-ctl);
+  padding: 10px 12px;
+}
+
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text);
+  margin-top: 10px;
+  cursor: pointer;
+}
+.check-row input { accent-color: var(--accent); margin-top: 2px; }
+.check-row .opt { color: var(--faint); font-size: 12px; }
 
 /* ============================ toasts ============================ */
 

@@ -61,6 +61,20 @@ def _scrub(s: str) -> str:
     return _BAD_LOG_CHARS.sub("?", s).replace("\r", " ").replace("\n", " ")
 
 
+def scrub_multiline(s: str) -> str:
+    """Like _scrub but preserves newlines — for multi-line remote text
+    (release notes) rendered via textContent in the web UI.
+
+    CR is normalised BEFORE the character-class pass: it sits inside the
+    scrubbed 0x0B-0x1F range, so scrubbing first would turn every CRLF
+    line ending into a stray '?'.
+    """
+    if not isinstance(s, str):
+        s = str(s)
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    return _BAD_LOG_CHARS.sub("?", s)
+
+
 _CONSENT_FIELD_MAX = 256
 
 
@@ -157,6 +171,11 @@ def apply_settings_atomically(c: Config, new_values: dict):
     c.audio_source = new_values["audio_source"]
     c.recordings_dir = new_values["recordings_dir"]
     c.loopback_device_name = new_values.get("loopback_device_name", "")
+    # Optional so the legacy Tk dialog (which has no toggle) and config
+    # doubles in tests keep the existing value untouched.
+    c.check_updates = bool(
+        new_values.get("check_updates", getattr(c, "check_updates", True))
+    )
     return None
 
 
