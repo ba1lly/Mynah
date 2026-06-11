@@ -279,6 +279,26 @@ class InstallerWindow:
         except (ValueError, OSError):
             messagebox.showerror(APP_TITLE, "Invalid install folder.")
             return
+        # Pre-flight writability check. Mynah is a per-user app that
+        # writes settings, recordings, and updates into its own folder,
+        # so admin-only locations like C:\Program Files would break it
+        # at recording time even if an elevated install succeeded.
+        try:
+            install_dir.mkdir(parents=True, exist_ok=True)
+            probe = install_dir / ".mynah-write-test"
+            probe.write_text("x", encoding="utf-8")
+            probe.unlink()
+        except (PermissionError, OSError):
+            messagebox.showerror(
+                APP_TITLE,
+                f"Your user account can't write to:\n{install_dir}\n\n"
+                "Mynah keeps its settings, recordings, and updates inside "
+                "its install folder, so it needs a per-user location — "
+                "admin-only folders like C:\\Program Files would break "
+                "saving recordings.\n\n"
+                f"The default is recommended:\n{lib.DEFAULT_INSTALL_DIR}",
+            )
+            return
         self._working = True
         self.install_btn.configure(state=tk.DISABLED, text="INSTALLING…")
         self.dir_entry.configure(state=tk.DISABLED)
