@@ -290,7 +290,6 @@ async function openSettings() {
   const o = cfg.options;
 
   $("#set-client-id").value = v.discord_client_id;
-  $("#set-client-secret").value = v.discord_client_secret;
   $("#set-hf-token").value = v.hf_token;
 
   fillSelect($("#set-model"), o.whisper_models.map((m) => ({ value: m, label: m })), v.whisper_model);
@@ -327,7 +326,6 @@ function fillSelect(sel, options, selected) {
 async function saveSettings() {
   const values = {
     discord_client_id: $("#set-client-id").value,
-    discord_client_secret: $("#set-client-secret").value,
     hf_token: $("#set-hf-token").value,
     whisper_model: $("#set-model").value,
     audio_source: $("#set-source").value,
@@ -350,7 +348,7 @@ async function saveSettings() {
 async function doConnect() {
   const res = await api().connect();
   if (!res.ok && res.error === "not_configured") {
-    toast("Set your Discord Client ID and Client Secret first.", "err");
+    toast("Set your Discord Client ID first.", "err");
     openSettings();
   } else if (!res.ok) {
     toast(res.error, "err");

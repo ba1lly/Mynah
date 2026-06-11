@@ -110,23 +110,25 @@ identity. **This is not a bot** — we don't go anywhere near the Bot tab.
 1. Open <https://discord.com/developers/applications> → **New Application**.
    Name it anything (e.g. "My Mynah").
 2. **OAuth2** tab → **Redirects** → add `http://localhost` → **Save Changes**.
-3. **OAuth2** tab → copy the **Client ID** (visible) and click **Reset
-   Secret** → copy the **Client Secret**.
-4. The `rpc` scope is restricted by Discord, so add yourself as a tester:
+3. **OAuth2** tab → enable **Public Client** → **Save Changes**. This is
+   what lets the app authenticate with PKCE — **no Client Secret is
+   needed, asked for, or stored**.
+4. **OAuth2** tab → copy the **Client ID**.
+5. The `rpc` scope is restricted by Discord, so add yourself as a tester:
    - **App Testers** tab (if it appears on your application) → add your own
      Discord user.
    - If you don't see this tab, the `AUTHORIZE` step on first connect may
      return "RPC is not approved" — Discord's gating policy varies per
      account/app age. If that happens, the app will report it clearly.
-5. Launch the recorder, open **Settings** (gear icon, top right), paste
-   both values, click **Save**.
+6. Launch the recorder, open **Settings** (gear icon, top right), paste
+   the Client ID, click **Save**.
 
 The first time you click **Connect to Discord**, the Discord desktop app
 will pop an **Authorize** prompt — accept it. The resulting access/refresh
 token is stored in the **Windows Credential Manager** (under
 `com.github.ba1lly.mynah`) and refreshed
-automatically; you only do this once. The Client Secret and HF Token
-go to the same place — none of the secrets are written to
+automatically; you only do this once. The HF Token (if you add one)
+goes to the same place — none of the secrets are written to
 `config.json` on disk.
 
 ---
@@ -335,7 +337,8 @@ Your PC
 │     └── exposes \\.\pipe\discord-ipc-{0..9}   ← local Windows named pipe
 │
 └── Mynah
-       ├── rpc.py    — connects to the local pipe, does OAuth handshake +
+       ├── rpc.py    — connects to the local pipe, does the OAuth handshake
+       │              (PKCE, S256 — no client secret) +
        │              AUTHORIZE/AUTHENTICATE, polls GET_SELECTED_VOICE_CHANNEL
        │              every 2s, AND subscribes to SPEAKING_START/SPEAKING_STOP
        │              for the active voice channel. A background reader thread
@@ -420,6 +423,13 @@ WhisperX is installed from GitHub, which needs `git` on PATH. Install from
 
 Make sure the Discord desktop client (not the browser) is running. The
 in-browser Discord doesn't expose RPC.
+
+### "Discord rejected the PKCE token exchange (invalid_client)"
+
+Your application doesn't have **Public Client** enabled. Open
+<https://discord.com/developers/applications> → your app → **OAuth2**
+tab → toggle **Public Client** on → **Save Changes**, then click
+**Connect to Discord** again.
 
 ### "RPC is not approved" / `AUTHORIZE` rejected
 
@@ -512,7 +522,7 @@ project folder (when running from `start.ps1` / `run.py`) or next to
 | Path | What |
 |---|---|
 | `.\config.json` | Non-sensitive settings only: Client ID, audio source, loopback device choice, whisper model, recordings folder. **No secrets.** |
-| Windows Credential Manager, service `com.github.ba1lly.mynah` | Client Secret, HF token, and cached OAuth access/refresh tokens — see Settings → Save to populate, or Control Panel → Credential Manager → Windows Credentials to audit |
+| Windows Credential Manager, service `com.github.ba1lly.mynah` | HF token and cached OAuth access/refresh tokens — see Settings → Save to populate, or Control Panel → Credential Manager → Windows Credentials to audit. (Older versions also stored a Discord Client Secret here; the PKCE flow no longer uses one, and the app removes the stale entry on launch.) |
 | `.\Recordings\` | All `.wav`, `.json`, `.txt` outputs (configurable in Settings) |
 | `.\.venv\` | Python virtual environment (dev mode only) |
 | `.\dist\Mynah\` | Built standalone application (after `start.ps1 -Build`); contains its own (non-secret) `config.json` + `Recordings\` |

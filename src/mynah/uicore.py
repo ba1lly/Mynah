@@ -95,9 +95,10 @@ def apply_settings_atomically(c: Config, new_values: dict):
     rollback semantics are unit-testable without instantiating a Tk
     Toplevel. The contract is:
 
-    - Snapshot the prior secret state (token, client_secret, hf_token).
-    - Attempt the secret writes in this order: token (if creds changed),
-      client_secret, hf_token. If any raises SecretWriteError, roll
+    - Snapshot the prior secret state (token, hf_token).
+    - Attempt the secret writes in this order: token (cleared if the
+      client_id changed — the cached OAuth token belongs to the old
+      application), hf_token. If any raises SecretWriteError, roll
       back the writes that already committed (best-effort: a rollback
       that itself raises is swallowed and logged) and return the
       original exception.
@@ -112,15 +113,13 @@ def apply_settings_atomically(c: Config, new_values: dict):
     partial failure left the dialog telling the user "Settings were
     NOT saved" while the in-memory config carried the new client_id,
     a deleted token, and a half-applied keyring state.
+
+    (The Discord Client Secret was removed from this contract in the
+    PKCE migration, issue #1.)
     """
     new_client_id = new_values["discord_client_id"]
-    new_secret = new_values["discord_client_secret"]
     new_hf_token = new_values["hf_token"]
-    credentials_changed = (
-        new_client_id != c.discord_client_id
-        or new_secret != c.discord_client_secret
-    )
-    orig_secret = c.discord_client_secret
+    credentials_changed = new_client_id != c.discord_client_id
     orig_hf_token = c.hf_token
     orig_token = c.token
     secret_writes_committed: list[str] = []
@@ -128,8 +127,6 @@ def apply_settings_atomically(c: Config, new_values: dict):
         if credentials_changed:
             c.token = None
             secret_writes_committed.append("token")
-        c.discord_client_secret = new_secret
-        secret_writes_committed.append("client_secret")
         c.hf_token = new_hf_token
         secret_writes_committed.append("hf_token")
     except secrets_store.SecretWriteError as e:
@@ -137,8 +134,6 @@ def apply_settings_atomically(c: Config, new_values: dict):
             try:
                 if kind == "hf_token":
                     c.hf_token = orig_hf_token
-                elif kind == "client_secret":
-                    c.discord_client_secret = orig_secret
                 elif kind == "token" and orig_token is not None:
                     c.token = orig_token
             except secrets_store.SecretWriteError as rollback_err:

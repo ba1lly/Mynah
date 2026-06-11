@@ -27,11 +27,10 @@ from mynah.rpc import DiscordRPC
 def main() -> int:
     cfg = Config.load()
     print(f"client_id: {cfg.discord_client_id}")
-    print(f"client_secret length: {len(cfg.discord_client_secret)}")
     print(f"cached token: {'present' if cfg.token else 'none'}")
     print()
 
-    rpc = DiscordRPC(cfg.discord_client_id, cfg.discord_client_secret)
+    rpc = DiscordRPC(cfg.discord_client_id)
 
     from dataclasses import asdict
     token_dict = asdict(cfg.token) if cfg.token else None

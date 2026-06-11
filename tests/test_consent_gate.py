@@ -279,27 +279,17 @@ class TestApplySettingsAtomically:
         from unittest.mock import MagicMock
         from mynah import secrets_store
 
-        existing_secret = "live-secret"
         existing_hf = "live-hf"
 
         class _Config:
             def __init__(self):
                 self.discord_client_id = "orig_id"
-                self._secret = existing_secret
                 self._hf = existing_hf
                 self._token = MagicMock()
                 self.whisper_model = "large-v3-turbo"
                 self.audio_source = "mixed"
                 self.recordings_dir = "/tmp/x"
                 self.save_called = False
-
-            @property
-            def discord_client_secret(self):
-                return self._secret
-
-            @discord_client_secret.setter
-            def discord_client_secret(self, value):
-                self._secret = value
 
             @property
             def hf_token(self):
@@ -329,7 +319,6 @@ class TestApplySettingsAtomically:
     def _new_values(self):
         return {
             "discord_client_id": "new_id",
-            "discord_client_secret": "new-secret",
             "hf_token": "new-hf",
             "whisper_model": "large-v3-turbo",
             "audio_source": "mixed",
@@ -345,7 +334,6 @@ class TestApplySettingsAtomically:
 
         assert isinstance(err, secrets_store.SecretWriteError)
         assert cfg.discord_client_id == "orig_id"
-        assert cfg._secret == "live-secret"
         assert cfg._hf == "live-hf"
         assert cfg.recordings_dir == "/tmp/x"
 
@@ -357,7 +345,6 @@ class TestApplySettingsAtomically:
 
         assert err is None
         assert cfg.discord_client_id == "new_id"
-        assert cfg._secret == "new-secret"
         assert cfg._hf == "new-hf"
         assert cfg.recordings_dir == "/tmp/y"
 
@@ -374,26 +361,12 @@ class TestApplySettingsAtomically:
         class _Config:
             def __init__(self):
                 self.discord_client_id = "orig_id"
-                self._secret = "live-secret"
                 self._hf = "live-hf"
                 self._token = MagicMock()
                 self.whisper_model = "large-v3-turbo"
                 self.audio_source = "mixed"
                 self.recordings_dir = "/tmp/x"
-                self._secret_set_count = 0
-
-            @property
-            def discord_client_secret(self):
-                return self._secret
-
-            @discord_client_secret.setter
-            def discord_client_secret(self, value):
-                self._secret_set_count += 1
-                if self._secret_set_count >= 2:
-                    raise secrets_store.SecretWriteError(
-                        "rollback restore for client_secret failed"
-                    )
-                self._secret = value
+                self._token_set_count = 0
 
             @property
             def hf_token(self):
@@ -413,6 +386,13 @@ class TestApplySettingsAtomically:
 
             @token.setter
             def token(self, value):
+                # First set (clear to None when client_id changes)
+                # succeeds; the rollback's restore-to-original raises.
+                self._token_set_count += 1
+                if self._token_set_count >= 2:
+                    raise secrets_store.SecretWriteError(
+                        "rollback restore for token failed"
+                    )
                 self._token = value
 
             def save(self):
@@ -421,7 +401,6 @@ class TestApplySettingsAtomically:
         cfg = _Config()
         new_values = {
             "discord_client_id": "new_id",
-            "discord_client_secret": "new-secret",
             "hf_token": "new-hf",
             "whisper_model": "large-v3-turbo",
             "audio_source": "mixed",
@@ -432,7 +411,7 @@ class TestApplySettingsAtomically:
 
         assert isinstance(err, secrets_store.SecretWriteError)
         assert any(
-            "rollback of client_secret failed" in r.message.lower()
+            "rollback of token failed" in r.message.lower()
             for r in caplog.records
         )
 
