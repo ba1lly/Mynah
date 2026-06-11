@@ -112,6 +112,7 @@ First public release.
 - ~10 GB of disk for Python deps + Whisper weights; ~15 GB recommended.
 - Python 3.10–3.13 for dev mode; not needed for the `.exe` build.
 
+[1.4.0]: https://github.com/ba1lly/Mynah/releases/tag/v1.4.0
 [1.3.0]: https://github.com/ba1lly/Mynah/releases/tag/v1.3.0
 [1.2.0]: https://github.com/ba1lly/Mynah/releases/tag/v1.2.0
 [1.1.0]: https://github.com/ba1lly/Mynah/releases/tag/v1.1.0
