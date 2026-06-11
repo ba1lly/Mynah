@@ -751,6 +751,26 @@ select.input { cursor: pointer; }
 .check-row input { accent-color: var(--accent); margin-top: 2px; }
 .check-row .opt { color: var(--faint); font-size: 12px; }
 
+.update-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 12px;
+}
+.update-progress-track {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--line-soft);
+  overflow: hidden;
+}
+.update-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+
 /* ============================ toasts ============================ */
 
 .toasts {

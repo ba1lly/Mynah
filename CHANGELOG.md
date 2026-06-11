@@ -4,6 +4,20 @@ All notable changes to Mynah are documented here.
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] — 2026-06-11
+
+### Added
+
+- **One-click in-app updates** — the update dialog now offers **Update
+  now** (alongside Later): the app downloads the new `MynahSetup.exe`
+  from the GitHub release (sha256-verified against the release's
+  checksum file, URLs locked to this repo's release assets), restarts
+  into the installer's new `--update` mode — which re-runs only the
+  steps whose pins changed, typically under a minute — and relaunches
+  Mynah when done. Available on installer-based installs; dev checkouts
+  and the standalone build keep the "Open download page" button.
+  Updating is blocked while a recording or transcription is running.
+
 ## [1.2.0] — 2026-06-11
 
 ### Added
@@ -98,6 +112,7 @@ First public release.
 - ~10 GB of disk for Python deps + Whisper weights; ~15 GB recommended.
 - Python 3.10–3.13 for dev mode; not needed for the `.exe` build.
 
+[1.3.0]: https://github.com/ba1lly/Mynah/releases/tag/v1.3.0
 [1.2.0]: https://github.com/ba1lly/Mynah/releases/tag/v1.2.0
 [1.1.0]: https://github.com/ba1lly/Mynah/releases/tag/v1.1.0
 [1.0.1]: https://github.com/ba1lly/Mynah/releases/tag/v1.0.1

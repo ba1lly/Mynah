@@ -65,6 +65,51 @@ _ALLOWED_URLS = {
 
 _RELEASES_API = "https://api.github.com/repos/ba1lly/Mynah/releases/latest"
 _RELEASE_NOTES_MAX = 20_000  # chars; UI shows a scrollable pane
+# In-app updates only ever download from this repo's own release assets;
+# any other URL in the API response (a compromised/spoofed feed) is
+# ignored and the UI falls back to the manual download page.
+_RELEASE_DOWNLOAD_PREFIX = "https://github.com/ba1lly/Mynah/releases/download/"
+
+
+def _parse_sha256_file(text: str) -> Optional[str]:
+    """First token of a `sha256sum`-style file ('<hex>  MynahSetup.exe')."""
+    token = (text.split() or [""])[0].strip().lower()
+    if len(token) == 64 and all(c in "0123456789abcdef" for c in token):
+        return token
+    return None
+
+
+def _installer_install_dir() -> Optional[Path]:
+    """The install dir when running from a bootstrap-installer layout,
+    else None (dev checkout / frozen Mynah.exe — no in-app update)."""
+    root = os.environ.get("MYNAH_APP_ROOT")
+    if not root:
+        return None
+    p = Path(root)
+    if (p / "Mynah.pyw").exists() and (p / "python" / "pythonw.exe").exists():
+        return p
+    return None
+
+
+def _extract_installer_assets(
+    release_body: dict,
+) -> tuple[Optional[str], Optional[str]]:
+    """(exe_url, sha_url) for MynahSetup.exe assets, allowlisted to this
+    repo's release-download URLs. Anything else is treated as absent."""
+    exe_url: Optional[str] = None
+    sha_url: Optional[str] = None
+    for asset in release_body.get("assets") or []:
+        if not isinstance(asset, dict):
+            continue
+        url = str(asset.get("browser_download_url") or "")
+        if not url.startswith(_RELEASE_DOWNLOAD_PREFIX):
+            continue
+        name = str(asset.get("name") or "")
+        if name == "MynahSetup.exe":
+            exe_url = url
+        elif name == "MynahSetup.exe.sha256":
+            sha_url = url
+    return exe_url, sha_url
 
 
 def _parse_version(tag: str) -> tuple[int, ...]:
@@ -128,6 +173,10 @@ class MynahBackend:
         self._recordings: list[dict] = []
         # Set when a newer release exists: {"version", "notes", "url"}.
         self._update: Optional[dict] = None
+        # (exe_url, sha_url) of the new release's installer assets —
+        # kept backend-side; the frontend never supplies download URLs.
+        self._update_assets: Optional[tuple[str, Optional[str]]] = None
+        self._updating = False
         self._refresh_recordings_index()
 
     # ---- wiring (called from webui.py, not exposed to JS: underscore) ----
@@ -216,11 +265,21 @@ class MynahBackend:
         if _parse_version(tag) <= _parse_version(current):
             return None, None
         notes = scrub_multiline(str(body.get("body") or ""))[:_RELEASE_NOTES_MAX]
-        return {
+        exe_url, sha_url = _extract_installer_assets(body)
+        update = {
             "version": _scrub(tag.lstrip("vV")),
             "notes": notes,
             "url": _ALLOWED_URLS["latest_release"],
-        }, None
+            # The UI offers one-click "Update now" only when (a) the
+            # release ships an installer asset from this repo and (b)
+            # this copy was itself installed by the installer.
+            "canAutoUpdate": bool(
+                exe_url and _installer_install_dir() is not None
+            ),
+        }
+        with self._lock:
+            self._update_assets = (exe_url, sha_url) if exe_url else None
+        return update, None
 
     # ---- JS API: updates ----
 
@@ -238,6 +297,117 @@ class MynahBackend:
         if err is not None:
             return {"ok": False, "error": err}
         return {"ok": True, "update": None}
+
+    def start_update(self) -> dict:
+        """One-click update: download the new MynahSetup.exe from the
+        release (sha256-verified), hand the install dir to its --update
+        mode, and exit — the installer re-runs only the changed steps
+        and relaunches Mynah when done."""
+        with self._lock:
+            if self._updating:
+                return {"ok": False, "error": "Update already in progress."}
+            if self._update is None or self._update_assets is None:
+                return {"ok": False, "error": "No update available."}
+            if self._session is not None or self._starting or self._stopping:
+                return {
+                    "ok": False,
+                    "error": "Stop the recording before updating.",
+                }
+            if self._transcribing:
+                return {
+                    "ok": False,
+                    "error": "Wait for the transcription to finish "
+                             "before updating.",
+                }
+            install_dir = _installer_install_dir()
+            if install_dir is None:
+                return {
+                    "ok": False,
+                    "error": "This copy wasn't installed by MynahSetup — "
+                             "use the download page instead.",
+                }
+            self._updating = True
+            self._status = "Downloading update…"
+            exe_url, sha_url = self._update_assets
+            version = self._update["version"]
+        self._emit_state()
+
+        def worker() -> None:
+            try:
+                dest = self._download_installer(
+                    install_dir, exe_url, sha_url, version,
+                )
+            except Exception as e:  # noqa: BLE001
+                log.exception("Update download failed")
+                with self._lock:
+                    self._updating = False
+                    self._status = "Ready"
+                self._emit_error("Update", str(e))
+                self._emit_state()
+                return
+            log.info("Update downloaded and verified; restarting to apply.")
+            self._emit_event("update-restarting", {})
+            import subprocess
+
+            subprocess.Popen(
+                [str(dest), "--update", str(install_dir)],
+                cwd=str(install_dir),
+                close_fds=True,
+            )
+            # Same teardown as request_quit: the installer takes over.
+            self.request_quit()
+
+        threading.Thread(target=worker, daemon=True, name="update").start()
+        return {"ok": True}
+
+    def _download_installer(
+        self,
+        install_dir: Path,
+        exe_url: str,
+        sha_url: Optional[str],
+        version: str,
+    ) -> Path:
+        """Stream the installer asset to downloads\\, verify sha256."""
+        import hashlib
+
+        import requests
+
+        expected: Optional[str] = None
+        if sha_url:
+            resp = requests.get(sha_url, timeout=15)
+            resp.raise_for_status()
+            expected = _parse_sha256_file(resp.text)
+        if expected is None:
+            raise RuntimeError(
+                "Release is missing a usable sha256 file; refusing to "
+                "run an unverified installer. Use the download page."
+            )
+
+        downloads = install_dir / "downloads"
+        downloads.mkdir(parents=True, exist_ok=True)
+        dest = downloads / f"MynahSetup-{version}.exe"
+        digest = hashlib.sha256()
+        done = 0
+        with requests.get(exe_url, stream=True, timeout=30) as resp:
+            resp.raise_for_status()
+            total = int(resp.headers.get("Content-Length") or 0) or None
+            with dest.open("wb") as f:
+                for chunk in resp.iter_content(chunk_size=256 * 1024):
+                    f.write(chunk)
+                    digest.update(chunk)
+                    done += len(chunk)
+                    self._emit_event(
+                        "update-progress", {"done": done, "total": total},
+                    )
+        actual = digest.hexdigest()
+        if actual != expected:
+            dest.unlink(missing_ok=True)
+            raise RuntimeError(
+                "Downloaded installer failed checksum verification "
+                f"(expected {expected[:12]}…, got {actual[:12]}…). "
+                "Not running it."
+            )
+        return dest
 
     def _has_active_session(self) -> bool:
         with self._lock:

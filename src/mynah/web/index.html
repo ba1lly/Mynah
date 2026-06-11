@@ -238,10 +238,15 @@
     <div class="modal-body">
       <p id="update-versions"></p>
       <div class="release-notes" id="update-notes"></div>
+      <div class="update-progress" id="update-progress" hidden>
+        <div class="update-progress-track"><div class="update-progress-bar" id="update-progress-bar"></div></div>
+        <span class="hint" id="update-progress-text">Downloading update…</span>
+      </div>
     </div>
-    <div class="modal-foot">
+    <div class="modal-foot" id="update-actions">
       <button class="btn btn-ghost" data-close="overlay-update">Later</button>
-      <button class="btn btn-primary" id="btn-get-update">Open download page</button>
+      <button class="btn btn-ghost" id="btn-get-update" hidden>Open download page</button>
+      <button class="btn btn-primary" id="btn-update-now" hidden>Update now</button>
     </div>
   </div>
 </div>
