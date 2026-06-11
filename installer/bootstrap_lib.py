@@ -403,6 +403,47 @@ def python_exe(install_dir: Path) -> Path:
     return install_dir / "python" / "python.exe"
 
 
+# (step id, human label, weight for the progress bar). State keys embed
+# the pinned versions so a NEWER MynahSetup run over an old install
+# re-runs exactly the steps whose pins changed — nothing else.
+STEPS = [
+    ("runtime", "Python runtime", 1),
+    ("torch", "PyTorch (the big one)", 6),
+    ("whisperx", "WhisperX + transcription stack", 3),
+    ("app", "Mynah", 1),
+    ("launcher", "Launcher + shortcuts", 1),
+]
+
+
+def step_keys(gpu: GpuInfo, wheel_name: str) -> dict[str, str]:
+    return {
+        "runtime": f"runtime-{PYTHON_VERSION}",
+        "torch": f"torch-{TORCH_VERSION}-{'cuda' if gpu.has_cuda else 'cpu'}",
+        "whisperx": f"whisperx-{WHISPERX_SPEC}",
+        "app": f"app-{wheel_name}",
+        "launcher": f"launcher-{wheel_name}",
+    }
+
+
+def pending_steps(install_dir: Path, keys: dict[str, str]) -> list[str]:
+    """Which steps still need to run for this install dir.
+
+    Skipping is double-guarded: the state file says a step completed,
+    AND the runtime artifact must actually exist — a wiped python/
+    folder with a surviving state file would otherwise skip straight to
+    pip runs that have no interpreter to run in. (Even with lost state,
+    re-running a pip step is cheap: pip sees satisfied pins and does not
+    re-download.)
+    """
+    if not python_exe(install_dir).exists():
+        return [step_id for step_id, _, _ in STEPS]
+    state = InstallState(install_dir)
+    return [
+        step_id for step_id, _, _ in STEPS
+        if not state.is_done(keys[step_id])
+    ]
+
+
 def run_pip(
     install_dir: Path,
     args: list[str],

@@ -192,6 +192,62 @@ class TestExtractRuntime:
 
 # ---- install state ----------------------------------------------------------
 
+class TestPendingSteps:
+    """Already-installed detection: completed steps are skipped, but only
+    when the runtime artifact actually exists."""
+
+    def _keys(self):
+        return lib.step_keys(lib.GpuInfo(True, ""), "mynah-1.1.0.whl")
+
+    def test_fresh_dir_everything_pending(self, tmp_path: Path):
+        assert lib.pending_steps(tmp_path, self._keys()) == [
+            s for s, _, _ in lib.STEPS
+        ]
+
+    def test_completed_steps_skipped(self, tmp_path: Path):
+        keys = self._keys()
+        (tmp_path / "python").mkdir()
+        (tmp_path / "python" / "python.exe").write_bytes(b"x")
+        state = lib.InstallState(tmp_path)
+        state.mark(keys["runtime"])
+        state.mark(keys["torch"])
+        assert lib.pending_steps(tmp_path, keys) == [
+            "whisperx", "app", "launcher",
+        ]
+
+    def test_state_without_runtime_artifact_is_untrusted(self, tmp_path: Path):
+        # A wiped python/ folder with a surviving state file must NOT
+        # skip straight to pip steps that have no interpreter.
+        keys = self._keys()
+        state = lib.InstallState(tmp_path)
+        for key in keys.values():
+            state.mark(key)
+        assert lib.pending_steps(tmp_path, keys) == [
+            s for s, _, _ in lib.STEPS
+        ]
+
+    def test_changed_pin_reruns_only_that_step(self, tmp_path: Path):
+        (tmp_path / "python").mkdir()
+        (tmp_path / "python" / "python.exe").write_bytes(b"x")
+        old_keys = lib.step_keys(lib.GpuInfo(True, ""), "mynah-1.1.0.whl")
+        state = lib.InstallState(tmp_path)
+        for key in old_keys.values():
+            state.mark(key)
+        # New installer carries a newer wheel: only app+launcher re-run.
+        new_keys = lib.step_keys(lib.GpuInfo(True, ""), "mynah-1.2.0.whl")
+        assert lib.pending_steps(tmp_path, new_keys) == ["app", "launcher"]
+
+    def test_gpu_flavour_change_reruns_torch(self, tmp_path: Path):
+        (tmp_path / "python").mkdir()
+        (tmp_path / "python" / "python.exe").write_bytes(b"x")
+        cpu_keys = lib.step_keys(lib.GpuInfo(False, ""), "w.whl")
+        state = lib.InstallState(tmp_path)
+        for key in cpu_keys.values():
+            state.mark(key)
+        cuda_keys = lib.step_keys(lib.GpuInfo(True, ""), "w.whl")
+        assert lib.pending_steps(tmp_path, cuda_keys) == ["torch"]
+
+
 class TestInstallState:
     def test_roundtrip(self, tmp_path: Path):
         s = lib.InstallState(tmp_path)

@@ -22,6 +22,7 @@ if not wheels:
 datas = [
     (str(wheels[-1]), "wheel"),
     (str(ROOT / "src" / "mynah" / "assets" / "mynah.ico"), "."),
+    (str(ROOT / "installer" / "assets" / "mynah-logo.png"), "."),
 ]
 
 a = Analysis(
