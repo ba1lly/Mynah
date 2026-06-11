@@ -112,6 +112,7 @@ def run() -> int:
 
     _wire_logging(backend)
     backend._start_environment_check()
+    backend._start_update_check()
 
     # Force the Chromium-based backend: pywebview's MSHTML fallback is the
     # IE engine and cannot render the frontend. WebView2 ships with

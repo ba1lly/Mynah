@@ -42,6 +42,7 @@ from .uicore import (
     apply_settings_atomically,
     build_consent_record,
     index_recordings,
+    scrub_multiline,
 )
 
 log = logging.getLogger(__name__)
@@ -59,7 +60,25 @@ _LOOPBACK_DEFAULT_LABEL = "(Windows default playback)"
 # frontend cannot turn the backend into an arbitrary-URL launcher.
 _ALLOWED_URLS = {
     "developer_portal": "https://discord.com/developers/applications",
+    "latest_release": "https://github.com/ba1lly/Mynah/releases/latest",
 }
+
+_RELEASES_API = "https://api.github.com/repos/ba1lly/Mynah/releases/latest"
+_RELEASE_NOTES_MAX = 20_000  # chars; UI shows a scrollable pane
+
+
+def _parse_version(tag: str) -> tuple[int, ...]:
+    """'v1.2.3' / '1.2.3' -> (1, 2, 3); leading digits per part,
+    unparseable parts end the tuple ('1.2.3rc1' -> (1, 2, 3))."""
+    import re as _re
+
+    parts: list[int] = []
+    for piece in tag.lstrip("vV").split("."):
+        m = _re.match(r"\d+", piece)
+        if not m:
+            break
+        parts.append(int(m.group()))
+    return tuple(parts)
 
 
 class WebLogHandler(logging.Handler):
@@ -107,6 +126,8 @@ class MynahBackend:
 
         self._log_buffer: deque[dict] = deque(maxlen=2000)
         self._recordings: list[dict] = []
+        # Set when a newer release exists: {"version", "notes", "url"}.
+        self._update: Optional[dict] = None
         self._refresh_recordings_index()
 
     # ---- wiring (called from webui.py, not exposed to JS: underscore) ----
@@ -144,6 +165,72 @@ class MynahBackend:
             self._emit_state()
 
         threading.Thread(target=probe, daemon=True, name="env-check").start()
+
+    def _start_update_check(self) -> None:
+        """Launch-time update check — only when the user has it enabled
+        (Settings → 'Check for updates'); fail-silent on any network or
+        API hiccup. This is the app's only phone-home (see README)."""
+        if not self._config.check_updates:
+            return
+
+        def probe() -> None:
+            update = self._fetch_latest_release()
+            if update is None:
+                return
+            with self._lock:
+                self._update = update
+            log.info(
+                "Update available: v%s — see the UPDATE badge.",
+                update["version"],
+            )
+            self._emit_state()
+
+        threading.Thread(target=probe, daemon=True, name="update-check").start()
+
+    def _fetch_latest_release(self) -> Optional[dict]:
+        """Newest GitHub release if it's newer than this build, else None."""
+        import requests
+
+        from . import __version__ as current
+
+        try:
+            resp = requests.get(
+                _RELEASES_API,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "User-Agent": f"Mynah/{current}",
+                },
+                timeout=8,
+            )
+            resp.raise_for_status()
+            body = resp.json()
+        except Exception as e:  # noqa: BLE001 — never break the app over this
+            log.debug("Update check failed: %s", e)
+            return None
+        tag = str(body.get("tag_name") or "")
+        if not tag or _parse_version(tag) <= _parse_version(current):
+            return None
+        notes = scrub_multiline(str(body.get("body") or ""))[:_RELEASE_NOTES_MAX]
+        return {
+            "version": _scrub(tag.lstrip("vV")),
+            "notes": notes,
+            "url": _ALLOWED_URLS["latest_release"],
+        }
+
+    # ---- JS API: updates ----
+
+    def check_for_updates(self) -> dict:
+        """Manual check (Settings → Check now). Runs synchronously on
+        pywebview's caller thread; the frontend awaits the promise."""
+        if self._update is not None:
+            return {"ok": True, "update": dict(self._update)}
+        update = self._fetch_latest_release()
+        if update is not None:
+            with self._lock:
+                self._update = update
+            self._emit_state()
+            return {"ok": True, "update": update}
+        return {"ok": True, "update": None}
 
     def _has_active_session(self) -> bool:
         with self._lock:
@@ -230,6 +317,7 @@ class MynahBackend:
                 "transcribing": self._transcribing,
                 "status": self._status,
                 "recordings": list(self._recordings),
+                "update": dict(self._update) if self._update else None,
             }
 
     def get_log_backlog(self) -> list[dict]:
@@ -526,6 +614,7 @@ class MynahBackend:
                 "audio_source": c.audio_source,
                 "recordings_dir": c.recordings_dir,
                 "loopback_device_name": c.loopback_device_name,
+                "check_updates": c.check_updates,
             },
             "options": {
                 "whisper_models": _WHISPER_MODELS,
@@ -558,6 +647,9 @@ class MynahBackend:
                 ""
                 if values.get("loopback_device_name") in (None, _LOOPBACK_DEFAULT_LABEL)
                 else str(values.get("loopback_device_name"))
+            ),
+            "check_updates": bool(
+                values.get("check_updates", c.check_updates)
             ),
         }
 

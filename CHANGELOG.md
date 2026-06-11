@@ -22,6 +22,15 @@ and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   install folder.
 - Release workflow: pushing a version tag builds `MynahSetup.exe` on CI
   and attaches it (plus a SHA-256 checksum file) to the GitHub release.
+- **Proper uninstall** — installer-based installs register in Windows
+  "Apps & features"; uninstalling from there removes the app, shortcuts,
+  and registry entry, with a prompt to keep or delete your recordings
+  and settings.
+- **Update notifications** — the app checks GitHub's releases API on
+  launch (Settings toggle, on by default, documented in the README
+  privacy section). A newer version shows an UPDATE badge in the top
+  bar; clicking it shows the release notes and links to the download
+  page. Settings also has a manual "Check now" button.
 
 ### Fixed
 

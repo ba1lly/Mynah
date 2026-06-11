@@ -347,6 +347,151 @@ def start_menu_dir() -> Path:
     ) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
 
 
+# ---- uninstall: Apps & features registration --------------------------------
+
+# Per-user (HKCU) uninstall key — no elevation needed, mirrors how
+# Discord/VS Code user-installs register themselves.
+UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall\Mynah"
+
+
+def version_from_wheel_name(wheel_name: str) -> str:
+    """'mynah-1.1.0-py3-none-any.whl' -> '1.1.0' (best-effort)."""
+    m = re.match(r"mynah-([0-9][^-]*)-", wheel_name)
+    return m.group(1) if m else "0.0.0"
+
+
+def installed_size_kb(install_dir: Path) -> int:
+    """Approximate on-disk size for the Apps & features entry."""
+    total = 0
+    try:
+        for p in install_dir.rglob("*"):
+            try:
+                if p.is_file():
+                    total += p.stat().st_size
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return total // 1024
+
+
+def write_uninstall_entry(
+    install_dir: Path, version: str, key_path: str = UNINSTALL_KEY,
+) -> None:
+    """Register the install in HKCU so Windows' 'Apps & features' lists
+    Mynah with a working Uninstall button."""
+    import winreg
+
+    setup_exe = install_dir / "MynahSetup.exe"
+    values = {
+        "DisplayName": "Mynah",
+        "DisplayVersion": version,
+        "Publisher": "ba1lly",
+        "DisplayIcon": str(icon_path(install_dir)),
+        "InstallLocation": str(install_dir),
+        "UninstallString": f'"{setup_exe}" --uninstall "{install_dir}"',
+        "URLInfoAbout": "https://github.com/ba1lly/Mynah",
+    }
+    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, key_path) as key:
+        for name, value in values.items():
+            winreg.SetValueEx(key, name, 0, winreg.REG_SZ, value)
+        winreg.SetValueEx(
+            key, "EstimatedSize", 0, winreg.REG_DWORD,
+            min(installed_size_kb(install_dir), 0x7FFFFFFF),
+        )
+        winreg.SetValueEx(key, "NoModify", 0, winreg.REG_DWORD, 1)
+        winreg.SetValueEx(key, "NoRepair", 0, winreg.REG_DWORD, 1)
+
+
+def remove_uninstall_entry(key_path: str = UNINSTALL_KEY) -> None:
+    import winreg
+
+    try:
+        winreg.DeleteKey(winreg.HKEY_CURRENT_USER, key_path)
+    except FileNotFoundError:
+        pass
+
+
+def copy_setup_into_install(install_dir: Path) -> None:
+    """Drop a copy of the running MynahSetup.exe into the install dir so
+    the registry UninstallString has something durable to point at.
+    No-op in dev runs (not frozen)."""
+    if not getattr(sys, "frozen", False):
+        return
+    import shutil
+
+    src = Path(sys.executable)
+    dest = install_dir / "MynahSetup.exe"
+    if src.resolve() == dest.resolve():
+        return
+    shutil.copy2(src, dest)
+
+
+def default_shortcut_paths() -> list[Path]:
+    return [
+        start_menu_dir() / "Mynah.lnk",
+        Path.home() / "Desktop" / "Mynah.lnk",
+    ]
+
+
+def remove_shortcuts(paths: Optional[list[Path]] = None) -> None:
+    for lnk in (paths if paths is not None else default_shortcut_paths()):
+        try:
+            lnk.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def uninstall(
+    install_dir: Path,
+    keep_user_data: bool,
+    *,
+    registry_key: str = UNINSTALL_KEY,
+    shortcut_paths: Optional[list[Path]] = None,
+) -> None:
+    """Remove shortcuts, the registry entry, and the install dir.
+
+    With keep_user_data, Recordings\\ and config.json survive; everything
+    else (runtime, packages, launcher, state) is removed. The running
+    MynahSetup.exe inside the install dir cannot delete itself, so the
+    final sweep is handed to a detached cmd that waits for this process
+    to exit first.
+    """
+    import shutil
+    import subprocess as sp
+
+    remove_shortcuts(shortcut_paths)
+    remove_uninstall_entry(registry_key)
+
+    keep = {"Recordings", "config.json"} if keep_user_data else set()
+    self_exe = install_dir / "MynahSetup.exe"
+    for child in list(install_dir.iterdir()):
+        if child.name in keep or child == self_exe:
+            continue
+        try:
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+    # Deferred final sweep: remove the setup exe itself, and the folder
+    # too unless user data stays behind.
+    if keep_user_data:
+        cleanup = f'del /q "{self_exe}"'
+    else:
+        cleanup = f'rmdir /s /q "{install_dir}"'
+    sp.Popen(
+        ["cmd", "/c", f"ping -n 3 127.0.0.1 >nul & {cleanup}"],
+        creationflags=(
+            getattr(sp, "CREATE_NO_WINDOW", 0)
+            | getattr(sp, "DETACHED_PROCESS", 0)
+        ),
+        close_fds=True,
+    )
+
+
 # ---- bundled wheel -----------------------------------------------------------
 
 def bundled_wheel() -> Path:

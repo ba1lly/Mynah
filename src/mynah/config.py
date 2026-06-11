@@ -263,6 +263,11 @@ class Config:
     # AudioRecorder.start() falls back to the Windows default with a
     # WARNING so the recording still proceeds.
     loopback_device_name: str = ""
+    # Query the GitHub releases API once per launch (and on demand) to
+    # surface new versions in the UI. The ONLY phone-home in the app —
+    # documented in the README privacy section, off-switchable here and
+    # in Settings, and it sends nothing but the HTTP request itself.
+    check_updates: bool = True
 
     # In-memory shadow of the secret values. Populated by `load()` from
     # the OS credential store on every launch (or from legacy config.json

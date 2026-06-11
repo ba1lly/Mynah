@@ -265,6 +265,85 @@ class TestInstallState:
 
 # ---- launcher ----------------------------------------------------------------
 
+class TestUninstall:
+    def test_version_from_wheel_name(self):
+        assert lib.version_from_wheel_name(
+            "mynah-1.1.0-py3-none-any.whl"
+        ) == "1.1.0"
+        assert lib.version_from_wheel_name("garbage.whl") == "0.0.0"
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="needs HKCU registry")
+    def test_registry_entry_roundtrip(self, tmp_path: Path):
+        import winreg
+
+        test_key = r"Software\MynahTest-Uninstall-Pytest"
+        try:
+            lib.write_uninstall_entry(tmp_path, "9.9.9", key_path=test_key)
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, test_key) as key:
+                name, _ = winreg.QueryValueEx(key, "DisplayName")
+                cmd, _ = winreg.QueryValueEx(key, "UninstallString")
+            assert name == "Mynah"
+            assert "--uninstall" in cmd
+            assert str(tmp_path) in cmd
+        finally:
+            lib.remove_uninstall_entry(test_key)
+        # Removed: opening again must fail.
+        with pytest.raises(FileNotFoundError):
+            winreg.OpenKey(winreg.HKEY_CURRENT_USER, test_key)
+
+    def test_remove_uninstall_entry_missing_is_quiet(self):
+        if sys.platform != "win32":
+            pytest.skip("needs HKCU registry")
+        lib.remove_uninstall_entry(r"Software\MynahTest-NeverExisted")
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="windows paths/cmd")
+    def test_uninstall_keeps_user_data(self, tmp_path: Path):
+        # Fake install layout
+        (tmp_path / "python" / "Lib").mkdir(parents=True)
+        (tmp_path / "python" / "python.exe").write_bytes(b"x")
+        (tmp_path / "downloads").mkdir()
+        (tmp_path / lib.LAUNCHER_NAME).write_text("x", encoding="utf-8")
+        (tmp_path / lib.STATE_FILENAME).write_text("{}", encoding="utf-8")
+        (tmp_path / "Recordings").mkdir()
+        (tmp_path / "Recordings" / "a_audio.wav").write_bytes(b"riff")
+        (tmp_path / "config.json").write_text("{}", encoding="utf-8")
+        fake_lnk = tmp_path / "fake-shortcut.lnk"
+        fake_lnk.write_bytes(b"lnk")
+
+        lib.uninstall(
+            tmp_path, keep_user_data=True,
+            registry_key=r"Software\MynahTest-NeverExisted",
+            shortcut_paths=[fake_lnk],
+        )
+
+        assert not (tmp_path / "python").exists()
+        assert not (tmp_path / "downloads").exists()
+        assert not (tmp_path / lib.LAUNCHER_NAME).exists()
+        assert not (tmp_path / lib.STATE_FILENAME).exists()
+        assert not fake_lnk.exists()
+        # User data survives
+        assert (tmp_path / "Recordings" / "a_audio.wav").exists()
+        assert (tmp_path / "config.json").exists()
+
+    @pytest.mark.skipif(sys.platform != "win32", reason="windows paths/cmd")
+    def test_uninstall_full_removes_everything_inline(self, tmp_path: Path):
+        (tmp_path / "python").mkdir()
+        (tmp_path / "python" / "python.exe").write_bytes(b"x")
+        (tmp_path / "Recordings").mkdir()
+        (tmp_path / "Recordings" / "a_audio.wav").write_bytes(b"riff")
+
+        lib.uninstall(
+            tmp_path, keep_user_data=False,
+            registry_key=r"Software\MynahTest-NeverExisted",
+            shortcut_paths=[],
+        )
+
+        # Inline pass removes contents; the dir itself goes via the
+        # deferred cmd (which we don't wait for here).
+        assert not (tmp_path / "python").exists()
+        assert not (tmp_path / "Recordings").exists()
+
+
 class TestLauncher:
     def test_launcher_sets_app_root_and_runs_main(self, tmp_path: Path):
         path = lib.write_launcher(tmp_path)

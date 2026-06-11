@@ -14,6 +14,7 @@ const ui = {
   consentText: null,
   timerHandle: null,
   logAutoScroll: true,
+  update: null,              // {version, notes, url} when newer release exists
 };
 
 /* ---------------------------- backend bridge --------------------------- */
@@ -142,8 +143,27 @@ function render(s) {
   // Archive card
   renderRecordings(s);
 
+  // Update pill
+  const pill = $("#update-pill");
+  if (s.update) {
+    pill.hidden = false;
+    $("#update-pill-ver").textContent = `v${s.update.version}`;
+    ui.update = s.update;
+  } else {
+    pill.hidden = true;
+  }
+
   // Status bar
   $("#statusbar-text").textContent = s.status || "Ready";
+}
+
+function openUpdateModal() {
+  if (!ui.update) return;
+  $("#update-versions").textContent =
+    `Mynah v${ui.update.version} is available — you have v${ui.state.version}.`;
+  $("#update-notes").textContent =
+    ui.update.notes || "(no release notes provided)";
+  $("#overlay-update").hidden = false;
 }
 
 function renderRecordings(s) {
@@ -307,6 +327,7 @@ async function openSettings() {
   fillSelect($("#set-loopback"), loopOpts, loopSel);
 
   $("#set-recdir").value = v.recordings_dir;
+  $("#set-check-updates").checked = !!v.check_updates;
   $("#settings-error").hidden = true;
   $("#overlay-settings").hidden = false;
   $("#set-client-id").focus();
@@ -331,6 +352,7 @@ async function saveSettings() {
     audio_source: $("#set-source").value,
     recordings_dir: $("#set-recdir").value,
     loopback_device_name: $("#set-loopback").value || null,
+    check_updates: $("#set-check-updates").checked,
   };
   const res = await api().save_settings(values);
   if (!res.ok) {
@@ -405,6 +427,29 @@ async function init() {
   });
   $("#btn-consent-yes").addEventListener("click", () => doStartRecording(true));
   $("#btn-consent-no").addEventListener("click", () => doStartRecording(false));
+  $("#update-pill").addEventListener("click", openUpdateModal);
+  $("#btn-get-update").addEventListener("click", () => {
+    api().open_url("latest_release");
+    $("#overlay-update").hidden = true;
+  });
+  $("#btn-check-updates").addEventListener("click", async () => {
+    const btn = $("#btn-check-updates");
+    btn.disabled = true;
+    btn.textContent = "Checking…";
+    try {
+      const res = await api().check_for_updates();
+      if (res.update) {
+        ui.update = res.update;
+        $("#overlay-settings").hidden = true;
+        openUpdateModal();
+      } else {
+        toast("You're on the latest version.", "ok");
+      }
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Check now";
+    }
+  });
   $("#btn-close-yes").addEventListener("click", () => api().request_quit());
   $("#btn-close-no").addEventListener("click", () => {
     $("#overlay-close").hidden = true;
@@ -418,6 +463,7 @@ async function init() {
     if (e.key === "Escape") {
       $("#overlay-settings").hidden = true;
       $("#overlay-consent").hidden = true;
+      $("#overlay-update").hidden = true;
     }
   });
 

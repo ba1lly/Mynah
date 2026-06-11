@@ -26,9 +26,10 @@ it. No Python, Git, or PowerShell needed.
   CPU-only.
 - If the connection drops mid-install, just run it again — it resumes
   where it left off.
-- You get a Start Menu entry (and optional Desktop shortcut). To
-  uninstall, delete the install folder and the shortcuts — nothing else
-  is touched.
+- You get a Start Menu entry (and optional Desktop shortcut), and the
+  install registers in Windows **Settings → Apps → Installed apps** —
+  uninstall it from there like any other app (it asks whether to keep
+  your recordings and settings).
 
 Then do the 2-minute [Discord setup](#discord-setup) below.
 
@@ -557,9 +558,13 @@ project folder (when running from `start.ps1` / `run.py`) or next to
 ## Privacy & legal
 
 - All audio capture and transcription is local. Nothing is uploaded.
-- The only outbound network traffic is the OAuth token exchange with
-  `discord.com/api/oauth2/token` (HTTPS) and model-weight downloads on
-  first transcription from `huggingface.co`.
+- Outbound network traffic, exhaustively: the OAuth token exchange with
+  `discord.com/api/oauth2/token` (HTTPS), model-weight downloads on
+  first transcription from `huggingface.co`, and — if you leave
+  **Settings → Check for updates** enabled (default) — one request per
+  launch to GitHub's releases API to see whether a newer version
+  exists. The update check sends nothing beyond the HTTP request
+  itself and can be turned off.
 - Recording laws still apply on the real-world side. In two-party-consent
   jurisdictions, inform participants.
 

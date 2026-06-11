@@ -27,6 +27,7 @@
   </div>
 
   <div class="topbar-right">
+    <button class="update-pill" id="update-pill" hidden>UPDATE&nbsp;<span id="update-pill-ver"></span></button>
     <div class="led-cluster" role="status">
       <span class="led-item"><span class="led" id="led-link"></span><span class="led-label">LINK</span></span>
       <span class="led-item"><span class="led" id="led-rec"></span><span class="led-label">REC</span></span>
@@ -177,6 +178,16 @@
           <button class="btn btn-ghost" id="btn-pick-dir">Browse…</button>
         </div>
       </div>
+      <div class="form-section">
+        <div class="form-section-title">Updates</div>
+        <label class="check-row">
+          <input type="checkbox" id="set-check-updates">
+          <span>Check for updates on launch <span class="opt">(one request
+          to GitHub's API — the app's only network call besides Discord
+          sign-in and model downloads)</span></span>
+        </label>
+        <button class="btn btn-ghost" id="btn-check-updates" style="margin-top:8px">Check now</button>
+      </div>
       <div class="form-error" id="settings-error" hidden></div>
     </div>
     <div class="modal-foot">
@@ -212,6 +223,25 @@
     <div class="modal-foot">
       <button class="btn btn-ghost" id="btn-close-no">Keep recording</button>
       <button class="btn btn-rec" id="btn-close-yes">Stop &amp; quit</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay-update" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="update-title">
+    <div class="modal-head warn">
+      <h3 id="update-title">UPDATE AVAILABLE</h3>
+      <button class="iconbtn sm" data-close="overlay-update" title="Close">
+        <svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <p id="update-versions"></p>
+      <div class="release-notes" id="update-notes"></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" data-close="overlay-update">Later</button>
+      <button class="btn btn-primary" id="btn-get-update">Open download page</button>
     </div>
   </div>
 </div>

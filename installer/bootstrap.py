@@ -407,6 +407,18 @@ class InstallerWindow:
                 )
             elif step_id == "launcher":
                 self._step_launcher(install_dir)
+                # Register in Windows 'Apps & features' so the install is
+                # uninstallable like any other app. The setup exe copies
+                # itself in as the uninstaller target.
+                lib.copy_setup_into_install(install_dir)
+                try:
+                    lib.write_uninstall_entry(
+                        install_dir,
+                        lib.version_from_wheel_name(wheel.name),
+                    )
+                    self._log("registered in Apps & features (uninstall)")
+                except OSError as e:
+                    self._log(f"could not register uninstall entry: {e}", "err")
 
             state.mark(keys[step_id])
             done_weight += weight
@@ -456,7 +468,47 @@ class InstallerWindow:
             self._log("Desktop shortcut created")
 
 
+def run_uninstall(install_dir: Path) -> int:
+    """`MynahSetup.exe --uninstall <dir>` — invoked by Windows
+    'Apps & features' via the registered UninstallString."""
+    root = tk.Tk()
+    root.withdraw()
+    if not messagebox.askokcancel(
+        "Uninstall Mynah",
+        f"Remove Mynah from:\n{install_dir}\n\n"
+        "Your Discord credentials in Windows Credential Manager are "
+        "removed by Windows policy only — you can clear them in "
+        "Credential Manager if you wish.",
+        icon=messagebox.WARNING,
+    ):
+        return 1
+    keep = messagebox.askyesno(
+        "Uninstall Mynah",
+        "Keep your recordings and settings?\n\n"
+        "Yes — delete the app but leave Recordings\\ and config.json "
+        "in place.\nNo — delete everything.",
+    )
+    lib.uninstall(install_dir, keep_user_data=keep)
+    messagebox.showinfo(
+        "Uninstall Mynah",
+        "Mynah has been removed."
+        + ("\n\nYour recordings and settings were kept." if keep else ""),
+    )
+    return 0
+
+
 def main() -> int:
+    if "--uninstall" in sys.argv:
+        idx = sys.argv.index("--uninstall")
+        if idx + 1 < len(sys.argv):
+            target = Path(sys.argv[idx + 1])
+        elif getattr(sys, "frozen", False):
+            target = Path(sys.executable).resolve().parent
+        else:
+            print("--uninstall requires an install dir", file=sys.stderr)
+            return 2
+        return run_uninstall(target)
+
     root = tk.Tk()
     InstallerWindow(root)
     root.mainloop()
