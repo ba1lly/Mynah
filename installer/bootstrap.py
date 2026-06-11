@@ -426,7 +426,8 @@ class InstallerWindow:
                 )
             elif step_id == "whisperx":
                 lib.run_pip(
-                    install_dir, ["install", lib.WHISPERX_SPEC],
+                    install_dir,
+                    ["install", lib.WHISPERX_SPEC, lib.TRANSFORMERS_CONSTRAINT],
                     on_line=self._log,
                 )
             elif step_id == "app":

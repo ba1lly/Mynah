@@ -49,6 +49,12 @@ TORCHAUDIO_VERSION = "2.8.0"
 TORCHVISION_VERSION = "0.23.0"
 TORCH_CUDA_INDEX = "https://download.pytorch.org/whl/cu126"
 WHISPERX_SPEC = "whisperx==3.8.6"
+# Resolver hint, not a functional pin: whisperx 3.8.6's dependency set
+# resolves to transformers 4.57.x anyway, but without this pip
+# backtracks through every 5.x release first (minutes of metadata
+# fetches on a fresh install, observed live). Also guards against
+# future resolution drift onto the untested 5.x line (issue #6).
+TRANSFORMERS_CONSTRAINT = "transformers<5"
 
 # Minimum NVIDIA driver for CUDA 12.6 wheels (see README system table).
 MIN_NVIDIA_DRIVER_MAJOR = 552
