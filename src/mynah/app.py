@@ -160,7 +160,20 @@ def main() -> int:
 
             root = tk.Tk()
             root.withdraw()
-            messagebox.showerror("Mynah — fatal error", message)
+            if log_path is not None:
+                # Issue #19: one click to the evidence instead of asking
+                # users to go hunting for crash.log by hand.
+                if messagebox.askyesno(
+                    "Mynah — fatal error",
+                    f"{message}\n\nOpen the crash log now?",
+                    icon=messagebox.ERROR,
+                ):
+                    try:
+                        os.startfile(str(log_path))  # noqa: S606
+                    except Exception:
+                        pass
+            else:
+                messagebox.showerror("Mynah — fatal error", message)
             root.destroy()
         except Exception:
             # The bootstrap-installed runtime (issue #9) ships without
@@ -170,9 +183,23 @@ def main() -> int:
                 try:
                     import ctypes
 
-                    ctypes.windll.user32.MessageBoxW(
-                        None, message, "Mynah — fatal error", 0x10,  # MB_ICONERROR
-                    )
+                    MB_ICONERROR, MB_YESNO, IDYES = 0x10, 0x04, 6
+                    if log_path is not None:
+                        clicked = ctypes.windll.user32.MessageBoxW(
+                            None,
+                            f"{message}\n\nOpen the crash log now?",
+                            "Mynah — fatal error",
+                            MB_ICONERROR | MB_YESNO,
+                        )
+                        if clicked == IDYES:
+                            try:
+                                os.startfile(str(log_path))  # noqa: S606
+                            except Exception:
+                                pass
+                    else:
+                        ctypes.windll.user32.MessageBoxW(
+                            None, message, "Mynah — fatal error", MB_ICONERROR,
+                        )
                 except Exception:
                     pass
         return 1

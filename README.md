@@ -411,6 +411,11 @@ Discord's side can tell you're recording.
 
 ## Troubleshooting
 
+> **Reporting a bug?** The app keeps a week of rotating logs — click the
+> folder icon in the **Console** card header (or look in `logs\` next to
+> the app) and attach the latest `mynah.log` to your issue. Logs contain
+> no secrets and are scrubbed of spoofable characters.
+
 ### `.\start.ps1` errors with "running scripts is disabled"
 
 Two options, in order of safety:
