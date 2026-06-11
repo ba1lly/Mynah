@@ -224,6 +224,16 @@ Invoke-Prefetch
 # --- 7. Build path or launch path ------------------------------------------
 
 if ($Build) {
+    # Deprecated since v1.3 (issue #17): MynahSetup.exe supersedes the
+    # full bundle for distribution (smaller, GPU-aware, resumable,
+    # uninstallable, self-updating). This path will be removed in a
+    # future release; the spec/SBOM machinery lives on in git history.
+    Write-Host ""
+    Write-Host "DEPRECATED: 'start.ps1 -Build' (the ~4 GB full bundle) is superseded by" -ForegroundColor Yellow
+    Write-Host "MynahSetup.exe (the installer on the GitHub releases page) and will be" -ForegroundColor Yellow
+    Write-Host "removed in a future release. See issue #17." -ForegroundColor Yellow
+    Write-Host ""
+
     Write-Step "Checking PyInstaller"
     if (-not (Has-Module "PyInstaller")) {
         & $VenvPy -m pip install "pyinstaller>=6.3"

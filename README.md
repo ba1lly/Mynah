@@ -57,11 +57,14 @@ First time only, the script will:
    pasted an HF token in Settings, pyannote diarization weights are
    pulled too.
 
-To build a standalone `.exe` so you never need PowerShell again:
-
-```powershell
-.\start.ps1 -Build
-```
+> **Deprecated:** `start.ps1 -Build` (the ~4 GB standalone bundle) is
+> superseded by `MynahSetup.exe` above and will be removed in a future
+> release ([#17](https://github.com/ba1lly/Mynah/issues/17)). It still
+> works for now:
+>
+> ```powershell
+> .\start.ps1 -Build
+> ```
 
 ---
 
