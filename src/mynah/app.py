@@ -148,7 +148,12 @@ def main() -> int:
                 "Could not write a crash log to disk "
                 "(no writable location available)."
             )
-        message = f"{type(exc).__name__}: {exc}\n\n{detail}"
+        try:
+            message = f"{type(exc).__name__}: {exc}\n\n{detail}"
+        except Exception:
+            # A __str__ that raises must not escape the fatal-error
+            # handler itself.
+            message = f"{type(exc).__name__}\n\n{detail}"
         try:
             import tkinter as tk
             from tkinter import messagebox

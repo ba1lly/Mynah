@@ -46,7 +46,8 @@ class TestFetchLatestRelease:
             "requests.get",
             lambda *a, **k: _response("v999.0.0", "## New\n- stuff‮"),
         )
-        update = b._fetch_latest_release()
+        update, err = b._fetch_latest_release()
+        assert err is None
         assert update is not None
         assert update["version"] == "999.0.0"
         assert "\n" in update["notes"]          # newlines preserved
@@ -61,14 +62,14 @@ class TestFetchLatestRelease:
             "requests.get",
             lambda *a, **k: _response(f"v{mynah.__version__}", "notes"),
         )
-        assert b._fetch_latest_release() is None
+        assert b._fetch_latest_release() == (None, None)
 
     def test_older_version_returns_none(self, monkeypatch):
         b = _backend()
         monkeypatch.setattr(
             "requests.get", lambda *a, **k: _response("v0.0.1", "notes"),
         )
-        assert b._fetch_latest_release() is None
+        assert b._fetch_latest_release() == (None, None)
 
     def test_network_error_returns_none(self, monkeypatch):
         b = _backend()
@@ -77,14 +78,31 @@ class TestFetchLatestRelease:
             raise OSError("no network")
 
         monkeypatch.setattr("requests.get", boom)
-        assert b._fetch_latest_release() is None
+        update, err = b._fetch_latest_release()
+        assert update is None
+        assert err is not None and "no network" in err
 
     def test_garbage_tag_returns_none(self, monkeypatch):
         b = _backend()
         monkeypatch.setattr(
             "requests.get", lambda *a, **k: _response("", "notes"),
         )
-        assert b._fetch_latest_release() is None
+        update, err = b._fetch_latest_release()
+        assert update is None
+        assert err is not None
+
+    def test_crlf_notes_keep_clean_line_endings(self, monkeypatch):
+        # CR sits inside the scrubbed control range; normalising after
+        # scrubbing left a stray '?' at the end of every CRLF line.
+        b = _backend()
+        monkeypatch.setattr(
+            "requests.get",
+            lambda *a, **k: _response("v999.0.0", "line one\r\nline two\r\n"),
+        )
+        update, _err = b._fetch_latest_release()
+        assert update is not None
+        assert "?" not in update["notes"]
+        assert update["notes"] == "line one\nline two\n"
 
     def test_notes_capped(self, monkeypatch):
         b = _backend()
@@ -92,7 +110,7 @@ class TestFetchLatestRelease:
             "requests.get",
             lambda *a, **k: _response("v999.0.0", "x" * 100_000),
         )
-        update = b._fetch_latest_release()
+        update, _err = b._fetch_latest_release()
         assert update is not None
         assert len(update["notes"]) <= 20_000
 
@@ -112,6 +130,19 @@ class TestManualCheck:
         assert first["update"]["version"] == "999.0.0"
         assert second["update"]["version"] == "999.0.0"
         assert len(calls) == 1  # cached after the first hit
+
+    def test_fetch_failure_reports_error_not_up_to_date(self, monkeypatch):
+        """Offline must NOT produce a confident 'you're on the latest
+        version' — the UI shows a couldn't-check error instead."""
+        b = _backend()
+
+        def boom(*_a, **_k):
+            raise OSError("no network")
+
+        monkeypatch.setattr("requests.get", boom)
+        res = b.check_for_updates()
+        assert res["ok"] is False
+        assert "no network" in res["error"]
 
     def test_disabled_setting_skips_launch_check(self):
         cfg = Config()

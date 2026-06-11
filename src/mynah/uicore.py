@@ -63,10 +63,16 @@ def _scrub(s: str) -> str:
 
 def scrub_multiline(s: str) -> str:
     """Like _scrub but preserves newlines — for multi-line remote text
-    (release notes) rendered via textContent in the web UI."""
+    (release notes) rendered via textContent in the web UI.
+
+    CR is normalised BEFORE the character-class pass: it sits inside the
+    scrubbed 0x0B-0x1F range, so scrubbing first would turn every CRLF
+    line ending into a stray '?'.
+    """
     if not isinstance(s, str):
         s = str(s)
-    return _BAD_LOG_CHARS.sub("?", s).replace("\r", "")
+    s = s.replace("\r\n", "\n").replace("\r", "\n")
+    return _BAD_LOG_CHARS.sub("?", s)
 
 
 _CONSENT_FIELD_MAX = 256

@@ -25,7 +25,9 @@ it. No Python, Git, or PowerShell needed.
   your driver and picks CUDA or CPU builds automatically), less for
   CPU-only.
 - If the connection drops mid-install, just run it again — it resumes
-  where it left off.
+  from the last completed step (the Python-runtime download also
+  resumes mid-file; packages that already installed aren't
+  re-downloaded).
 - You get a Start Menu entry (and optional Desktop shortcut), and the
   install registers in Windows **Settings → Apps → Installed apps** —
   uninstall it from there like any other app (it asks whether to keep

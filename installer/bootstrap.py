@@ -22,6 +22,7 @@ import shutil
 import sys
 import threading
 import tkinter as tk
+from collections import deque
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
@@ -124,7 +125,7 @@ class InstallerWindow:
         dir_row = tk.Frame(outer, bg=BG)
         dir_row.pack(fill=tk.X, pady=(4, 0))
         self.dir_var = tk.StringVar(value=str(lib.DEFAULT_INSTALL_DIR))
-        self.dir_var.trace_add("write", lambda *_: self._refresh_existing())
+        self.dir_var.trace_add("write", lambda *_: self._schedule_refresh())
         self.dir_entry = tk.Entry(
             dir_row, textvariable=self.dir_var,
             font=F_MONO_S, fg=TEXT, bg=PANEL, insertbackground=ACCENT,
@@ -197,9 +198,26 @@ class InstallerWindow:
         self.log.pack(fill=tk.BOTH, expand=True)
 
         root.protocol("WM_DELETE_WINDOW", self._on_close)
+        self._refresh_job: str | None = None
+        # Log lines are queued and drained on a 100ms pump: scheduling a
+        # root.after per pip output line floods the Tk event queue during
+        # the multi-GB torch step and stalls the window.
+        self._log_queue: deque[tuple[str, str]] = deque()
+        self.root.after(100, self._drain_log)
         self._refresh_existing()
 
     # ---- pre-flight detection ----
+
+    def _schedule_refresh(self) -> None:
+        """Debounce: the dir entry fires per keystroke; the existing-
+        install check hits the filesystem, so coalesce to one run 300ms
+        after typing stops."""
+        if self._refresh_job is not None:
+            try:
+                self.root.after_cancel(self._refresh_job)
+            except tk.TclError:
+                pass
+        self._refresh_job = self.root.after(300, self._refresh_existing)
 
     def _refresh_existing(self) -> None:
         """Reflect the chosen folder's install state before any click."""
@@ -238,13 +256,22 @@ class InstallerWindow:
     # ---- UI helpers (thread-safe via after()) ----
 
     def _log(self, line: str, tag: str = "") -> None:
-        def _do():
+        # Thread-safe: deque.append is atomic; the Tk-thread pump drains.
+        self._log_queue.append((line, tag))
+
+    def _drain_log(self) -> None:
+        if self._log_queue:
             self.log.configure(state=tk.NORMAL)
-            self.log.insert(tk.END, line + "\n", tag or ())
+            while self._log_queue:
+                line, tag = self._log_queue.popleft()
+                self.log.insert(tk.END, line + "\n", tag or ())
+            # Trim so a multi-thousand-line pip run can't bloat the widget.
+            total = int(self.log.index("end-1c").split(".")[0])
+            if total > 2000:
+                self.log.delete("1.0", f"{total - 2000}.0")
             self.log.see(tk.END)
             self.log.configure(state=tk.DISABLED)
-
-        self.root.after(0, _do)
+        self.root.after(100, self._drain_log)
 
     def _set_status(self, text: str) -> None:
         self.root.after(0, lambda: self.status_var.set(text))
@@ -256,8 +283,15 @@ class InstallerWindow:
 
     def _pick_dir(self) -> None:
         chosen = filedialog.askdirectory(initialdir=self.dir_var.get() or None)
-        if chosen:
-            self.dir_var.set(str(Path(chosen) / "Mynah"))
+        if not chosen:
+            return
+        chosen_path = Path(chosen)
+        # Browsing back INTO an existing install (or a folder already
+        # named Mynah) must not nest another \Mynah inside it.
+        if chosen_path.name.lower() == "mynah" or lib.looks_like_install(chosen_path):
+            self.dir_var.set(str(chosen_path))
+        else:
+            self.dir_var.set(str(chosen_path / "Mynah"))
 
     def _on_close(self) -> None:
         if self._working:
@@ -337,11 +371,10 @@ class InstallerWindow:
         self._refresh_existing()
 
     def _finished(self) -> None:
-        self._working = False
-        self.install_btn.configure(text="INSTALLED ✓")
         self._log("install complete", "ok")
-        self._refresh_existing()
-        self.install_btn.configure(state=tk.NORMAL)
+        # Re-enables the dir/browse controls and relabels the button via
+        # _refresh_existing (VERIFY / REPAIR on a complete install).
+        self._reset_button()
         messagebox.showinfo(
             APP_TITLE,
             "Mynah is installed.\n\n"
@@ -360,13 +393,15 @@ class InstallerWindow:
 
         # Disk-space sanity, scaled to what actually remains to install.
         if "torch" in pending:
-            free_gb = shutil.disk_usage(install_dir).free / 1e9
             need_gb = 12 if self.gpu.has_cuda else 5
-            if free_gb < need_gb:
-                raise lib.InstallError(
-                    f"Not enough disk space: {free_gb:.1f} GB free, "
-                    f"~{need_gb} GB needed on this drive."
-                )
+        else:
+            need_gb = 2  # whisperx/wheel/runtime remainder
+        free_gb = shutil.disk_usage(install_dir).free / 1e9
+        if free_gb < need_gb:
+            raise lib.InstallError(
+                f"Not enough disk space: {free_gb:.1f} GB free, "
+                f"~{need_gb} GB needed on this drive."
+            )
 
         total_weight = sum(w for _, _, w in lib.STEPS)
         done_weight = 0
@@ -395,30 +430,40 @@ class InstallerWindow:
                     on_line=self._log,
                 )
             elif step_id == "app":
-                lib.run_pip(
-                    install_dir,
-                    ["install", "--force-reinstall", "--no-deps", str(wheel)],
-                    on_line=self._log,
-                )
-                # Deps resolve in a second, plain pass (the forced pass
-                # is --no-deps so an upgrade never re-downloads torch).
-                lib.run_pip(
-                    install_dir, ["install", str(wheel)], on_line=self._log,
-                )
+                # One plain pass covers both fresh install and upgrade (a
+                # newer wheel version is never "already satisfied"); the
+                # same-version case never reaches here — the state key
+                # skips it. Keep the CUDA index in scope so a dependency
+                # resolution can't swap installed torch for a CPU build.
+                args = ["install", str(wheel)]
+                if self.gpu.has_cuda:
+                    args += ["--extra-index-url", lib.TORCH_CUDA_INDEX]
+                lib.run_pip(install_dir, args, on_line=self._log)
             elif step_id == "launcher":
                 self._step_launcher(install_dir)
                 # Register in Windows 'Apps & features' so the install is
                 # uninstallable like any other app. The setup exe copies
-                # itself in as the uninstaller target.
-                lib.copy_setup_into_install(install_dir)
-                try:
-                    lib.write_uninstall_entry(
-                        install_dir,
-                        lib.version_from_wheel_name(wheel.name),
+                # itself in as the uninstaller target — frozen builds
+                # only: a dev run has no exe to copy, and registering an
+                # UninstallString that points at nothing would leave an
+                # orphan entry with a dead Uninstall button.
+                if getattr(sys, "frozen", False):
+                    lib.copy_setup_into_install(install_dir)
+                    try:
+                        lib.write_uninstall_entry(
+                            install_dir,
+                            lib.version_from_wheel_name(wheel.name),
+                        )
+                        self._log("registered in Apps & features (uninstall)")
+                    except OSError as e:
+                        self._log(
+                            f"could not register uninstall entry: {e}", "err",
+                        )
+                else:
+                    self._log(
+                        "[dev] skipping Apps & features registration "
+                        "(not a frozen build)"
                     )
-                    self._log("registered in Apps & features (uninstall)")
-                except OSError as e:
-                    self._log(f"could not register uninstall entry: {e}", "err")
 
             state.mark(keys[step_id])
             done_weight += weight
@@ -473,6 +518,16 @@ def run_uninstall(install_dir: Path) -> int:
     'Apps & features' via the registered UninstallString."""
     root = tk.Tk()
     root.withdraw()
+    # Refuse anything that doesn't carry install markers: a mangled
+    # UninstallString or a manual `--uninstall <wrong dir>` must never
+    # delete an arbitrary folder's contents.
+    if not lib.looks_like_install(install_dir):
+        messagebox.showerror(
+            "Uninstall Mynah",
+            f"This folder does not look like a Mynah installation:\n"
+            f"{install_dir}\n\nNothing was removed.",
+        )
+        return 2
     if not messagebox.askokcancel(
         "Uninstall Mynah",
         f"Remove Mynah from:\n{install_dir}\n\n"
@@ -485,8 +540,8 @@ def run_uninstall(install_dir: Path) -> int:
     keep = messagebox.askyesno(
         "Uninstall Mynah",
         "Keep your recordings and settings?\n\n"
-        "Yes — delete the app but leave Recordings\\ and config.json "
-        "in place.\nNo — delete everything.",
+        "Yes — delete the app but leave your recordings folder and "
+        "config.json in place.\nNo — delete everything.",
     )
     lib.uninstall(install_dir, keep_user_data=keep)
     messagebox.showinfo(
@@ -494,6 +549,9 @@ def run_uninstall(install_dir: Path) -> int:
         "Mynah has been removed."
         + ("\n\nYour recordings and settings were kept." if keep else ""),
     )
+    # LAST, after the dialog: the deferred sweep retries until this
+    # process exits and releases the exe lock.
+    lib.spawn_deferred_cleanup(install_dir, keep_user_data=keep)
     return 0
 
 

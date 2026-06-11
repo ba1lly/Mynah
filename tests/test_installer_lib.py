@@ -78,6 +78,15 @@ class TestTorchPipArgs:
         args = lib.torch_pip_args(lib.GpuInfo(False, ""))
         assert "--extra-index-url" not in args
 
+    def test_force_reinstall_present_for_flavour_switches(self):
+        # PEP 440 ignores local segments: installed 2.8.0+cpu satisfies
+        # ==2.8.0, so without --force-reinstall a CPU->CUDA upgrade
+        # silently no-ops (start.ps1 mirrors this).
+        for has_cuda in (True, False):
+            assert "--force-reinstall" in lib.torch_pip_args(
+                lib.GpuInfo(has_cuda, "")
+            )
+
 
 # ---- resumable download -----------------------------------------------------
 
@@ -158,6 +167,38 @@ class TestDownload:
 
         out = lib.download("http://x/f", dest, sha256=self.SHA, _opener=opener)
         assert out == dest
+
+    def test_416_with_complete_part_promotes_instead_of_deleting(
+        self, tmp_path: Path,
+    ):
+        # Previous run died between the last byte and the rename: the
+        # .part IS the whole file; a 416 must not throw it away.
+        import urllib.error
+
+        dest = tmp_path / "file.bin"
+        part = tmp_path / "file.bin.part"
+        part.write_bytes(self.BODY)
+
+        def opener(req, timeout=None):
+            raise urllib.error.HTTPError("http://x/f", 416, "Range", {}, None)
+
+        out = lib.download("http://x/f", dest, sha256=self.SHA, _opener=opener)
+        assert out == dest
+        assert dest.read_bytes() == self.BODY
+        assert not part.exists()
+
+    def test_416_with_junk_part_clears_and_raises(self, tmp_path: Path):
+        import urllib.error
+
+        dest = tmp_path / "file.bin"
+        (tmp_path / "file.bin.part").write_bytes(b"junk")
+
+        def opener(req, timeout=None):
+            raise urllib.error.HTTPError("http://x/f", 416, "Range", {}, None)
+
+        with pytest.raises(lib.InstallError, match="stale"):
+            lib.download("http://x/f", dest, sha256=self.SHA, _opener=opener)
+        assert not (tmp_path / "file.bin.part").exists()
 
 
 # ---- runtime extraction -----------------------------------------------------
@@ -264,6 +305,42 @@ class TestInstallState:
 
 
 # ---- launcher ----------------------------------------------------------------
+
+class TestInstallMarkers:
+    def test_fresh_dir_is_not_an_install(self, tmp_path: Path):
+        assert lib.looks_like_install(tmp_path) is False
+
+    def test_any_marker_counts(self, tmp_path: Path):
+        (tmp_path / lib.STATE_FILENAME).write_text("{}", encoding="utf-8")
+        assert lib.looks_like_install(tmp_path) is True
+
+
+class TestKeepNames:
+    def test_defaults_without_config(self, tmp_path: Path):
+        assert lib.keep_names(tmp_path) == {"Recordings", "config.json"}
+
+    def test_custom_recordings_dir_inside_install_is_kept(self, tmp_path: Path):
+        import json
+
+        (tmp_path / "config.json").write_text(
+            json.dumps({"recordings_dir": str(tmp_path / "MyCalls" / "raw")}),
+            encoding="utf-8",
+        )
+        assert "MyCalls" in lib.keep_names(tmp_path)
+
+    def test_recordings_dir_outside_install_ignored(self, tmp_path: Path):
+        import json
+
+        (tmp_path / "config.json").write_text(
+            json.dumps({"recordings_dir": r"D:\Somewhere\Else"}),
+            encoding="utf-8",
+        )
+        assert lib.keep_names(tmp_path) == {"Recordings", "config.json"}
+
+    def test_malformed_config_falls_back(self, tmp_path: Path):
+        (tmp_path / "config.json").write_text("{not json", encoding="utf-8")
+        assert lib.keep_names(tmp_path) == {"Recordings", "config.json"}
+
 
 class TestUninstall:
     def test_version_from_wheel_name(self):

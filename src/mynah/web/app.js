@@ -145,10 +145,10 @@ function render(s) {
 
   // Update pill
   const pill = $("#update-pill");
+  ui.update = s.update || null;
   if (s.update) {
     pill.hidden = false;
     $("#update-pill-ver").textContent = `v${s.update.version}`;
-    ui.update = s.update;
   } else {
     pill.hidden = true;
   }
@@ -438,7 +438,9 @@ async function init() {
     btn.textContent = "Checking…";
     try {
       const res = await api().check_for_updates();
-      if (res.update) {
+      if (!res.ok) {
+        toast(`Couldn't check for updates: ${res.error}`, "err");
+      } else if (res.update) {
         ui.update = res.update;
         $("#overlay-settings").hidden = true;
         openUpdateModal();

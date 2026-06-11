@@ -119,9 +119,18 @@ def detect_gpu(run=subprocess.run) -> GpuInfo:
 
 
 def torch_pip_args(gpu: GpuInfo) -> list[str]:
-    """pip arguments for the torch trio, CUDA or CPU flavour."""
+    """pip arguments for the torch trio, CUDA or CPU flavour.
+
+    --force-reinstall is load-bearing for flavour SWITCHES (mirrors
+    start.ps1): PEP 440 ignores local version segments, so an installed
+    torch 2.8.0+cpu already satisfies ``torch==2.8.0`` and a plain
+    install would no-op the CPU→CUDA upgrade the GPU message promises.
+    On a fresh install there is nothing to reinstall, so it costs
+    nothing there.
+    """
     args = [
         "install",
+        "--force-reinstall",
         f"torch=={TORCH_VERSION}",
         f"torchaudio=={TORCHAUDIO_VERSION}",
         f"torchvision=={TORCHVISION_VERSION}",
@@ -166,8 +175,14 @@ def download(
         resp = _opener(req, timeout=60)
     except urllib.error.HTTPError as e:
         if e.code == 416:
-            # Range not satisfiable: the .part is already complete (or
-            # junk). Re-request from scratch on the next attempt.
+            # Range not satisfiable. Most often the .part IS the complete
+            # file (the previous run died between the last byte and the
+            # rename) — verify and promote instead of re-downloading.
+            if sha256 is not None and part.exists() and _file_sha256(part) == sha256:
+                part.replace(dest)
+                if progress:
+                    progress(dest.stat().st_size, dest.stat().st_size)
+                return dest
             part.unlink(missing_ok=True)
             raise InstallError(
                 "Partial download was stale; deleted it — click Install "
@@ -361,17 +376,29 @@ def version_from_wheel_name(wheel_name: str) -> str:
 
 
 def installed_size_kb(install_dir: Path) -> int:
-    """Approximate on-disk size for the Apps & features entry."""
+    """Approximate on-disk size for the Apps & features entry.
+
+    Iterative os.scandir walk: DirEntry caches the stat from the
+    directory read, so this is one pass over ~50k files instead of
+    rglob's stat-per-path (which adds noticeable time on HDDs right at
+    the end of the install).
+    """
     total = 0
-    try:
-        for p in install_dir.rglob("*"):
-            try:
-                if p.is_file():
-                    total += p.stat().st_size
-            except OSError:
-                continue
-    except OSError:
-        pass
+    stack = [str(install_dir)]
+    while stack:
+        current = stack.pop()
+        try:
+            with os.scandir(current) as entries:
+                for entry in entries:
+                    try:
+                        if entry.is_dir(follow_symlinks=False):
+                            stack.append(entry.path)
+                        elif entry.is_file(follow_symlinks=False):
+                            total += entry.stat(follow_symlinks=False).st_size
+                    except OSError:
+                        continue
+        except OSError:
+            continue
     return total // 1024
 
 
@@ -442,6 +469,44 @@ def remove_shortcuts(paths: Optional[list[Path]] = None) -> None:
             pass
 
 
+def looks_like_install(install_dir: Path) -> bool:
+    """Whether the directory carries Mynah install markers.
+
+    The uninstall path refuses to touch a directory without them — a
+    mangled UninstallString or a manual `--uninstall <wrong dir>` must
+    never delete an arbitrary folder's contents.
+    """
+    return any(
+        (install_dir / marker).exists()
+        for marker in (STATE_FILENAME, "python", LAUNCHER_NAME)
+    )
+
+
+def keep_names(install_dir: Path) -> set[str]:
+    """Top-level names preserved by a keep-user-data uninstall.
+
+    Always Recordings + config.json; additionally, if the user pointed
+    Settings -> Recordings folder at a custom directory INSIDE the
+    install dir, that directory is preserved too (a renamed recordings
+    folder must survive a 'keep my recordings' answer).
+    """
+    keep = {"Recordings", "config.json"}
+    try:
+        data = json.loads(
+            (install_dir / "config.json").read_text(encoding="utf-8-sig")
+        )
+        rec = Path(str(data.get("recordings_dir") or ""))
+        if rec.is_absolute():
+            rel = rec.resolve().relative_to(install_dir.resolve())
+            if rel.parts:
+                keep.add(rel.parts[0])
+    except (OSError, ValueError, json.JSONDecodeError):
+        # No config / malformed JSON / recordings_dir outside the
+        # install dir (the latter is untouched by the uninstall anyway).
+        pass
+    return keep
+
+
 def uninstall(
     install_dir: Path,
     keep_user_data: bool,
@@ -449,21 +514,22 @@ def uninstall(
     registry_key: str = UNINSTALL_KEY,
     shortcut_paths: Optional[list[Path]] = None,
 ) -> None:
-    """Remove shortcuts, the registry entry, and the install dir.
+    """Remove shortcuts, the registry entry, and the install contents.
 
-    With keep_user_data, Recordings\\ and config.json survive; everything
-    else (runtime, packages, launcher, state) is removed. The running
-    MynahSetup.exe inside the install dir cannot delete itself, so the
-    final sweep is handed to a detached cmd that waits for this process
-    to exit first.
+    With keep_user_data, the recordings folder(s) and config.json
+    survive; everything else (runtime, packages, launcher, state) is
+    removed. The running MynahSetup.exe and the (possibly retained)
+    folder itself are left for spawn_deferred_cleanup() — call that as
+    the LAST thing before process exit, after any farewell dialog, so
+    its retry window isn't burned while this process still holds the
+    exe lock.
     """
     import shutil
-    import subprocess as sp
 
     remove_shortcuts(shortcut_paths)
     remove_uninstall_entry(registry_key)
 
-    keep = {"Recordings", "config.json"} if keep_user_data else set()
+    keep = keep_names(install_dir) if keep_user_data else set()
     self_exe = install_dir / "MynahSetup.exe"
     for child in list(install_dir.iterdir()):
         if child.name in keep or child == self_exe:
@@ -476,14 +542,28 @@ def uninstall(
         except OSError:
             continue
 
-    # Deferred final sweep: remove the setup exe itself, and the folder
-    # too unless user data stays behind.
+
+def spawn_deferred_cleanup(install_dir: Path, keep_user_data: bool) -> None:
+    """Detached cmd that removes what the running process cannot: the
+    setup exe itself (and the folder, unless user data stays).
+
+    Retries for ~60s: the target stays locked until this process fully
+    exits, and antivirus scanners commonly hold freshly-flagged
+    binaries open for several seconds beyond that.
+    """
+    import subprocess as sp
+
+    self_exe = install_dir / "MynahSetup.exe"
     if keep_user_data:
-        cleanup = f'del /q "{self_exe}"'
+        action, target = f'del /f /q "{self_exe}"', self_exe
     else:
-        cleanup = f'rmdir /s /q "{install_dir}"'
+        action, target = f'rmdir /s /q "{install_dir}"', install_dir
+    script = (
+        f'for /l %i in (1,1,30) do ({action} >nul 2>&1 & '
+        f'if not exist "{target}" exit & ping -n 3 127.0.0.1 >nul)'
+    )
     sp.Popen(
-        ["cmd", "/c", f"ping -n 3 127.0.0.1 >nul & {cleanup}"],
+        ["cmd", "/c", script],
         creationflags=(
             getattr(sp, "CREATE_NO_WINDOW", 0)
             | getattr(sp, "DETACHED_PROCESS", 0)

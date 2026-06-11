@@ -174,9 +174,9 @@ class MynahBackend:
             return
 
         def probe() -> None:
-            update = self._fetch_latest_release()
+            update, _err = self._fetch_latest_release()
             if update is None:
-                return
+                return  # up to date, or a network blip — silent on launch
             with self._lock:
                 self._update = update
             log.info(
@@ -187,8 +187,11 @@ class MynahBackend:
 
         threading.Thread(target=probe, daemon=True, name="update-check").start()
 
-    def _fetch_latest_release(self) -> Optional[dict]:
-        """Newest GitHub release if it's newer than this build, else None."""
+    def _fetch_latest_release(self) -> tuple[Optional[dict], Optional[str]]:
+        """(update, error): the newest GitHub release when it's newer
+        than this build, else (None, None) for up-to-date and
+        (None, message) for fetch failures — callers that talk to the
+        user must not present a failed check as 'you're current'."""
         import requests
 
         from . import __version__ as current
@@ -206,16 +209,18 @@ class MynahBackend:
             body = resp.json()
         except Exception as e:  # noqa: BLE001 — never break the app over this
             log.debug("Update check failed: %s", e)
-            return None
+            return None, _scrub(str(e))
         tag = str(body.get("tag_name") or "")
-        if not tag or _parse_version(tag) <= _parse_version(current):
-            return None
+        if not tag:
+            return None, "release feed returned no version tag"
+        if _parse_version(tag) <= _parse_version(current):
+            return None, None
         notes = scrub_multiline(str(body.get("body") or ""))[:_RELEASE_NOTES_MAX]
         return {
             "version": _scrub(tag.lstrip("vV")),
             "notes": notes,
             "url": _ALLOWED_URLS["latest_release"],
-        }
+        }, None
 
     # ---- JS API: updates ----
 
@@ -224,12 +229,14 @@ class MynahBackend:
         pywebview's caller thread; the frontend awaits the promise."""
         if self._update is not None:
             return {"ok": True, "update": dict(self._update)}
-        update = self._fetch_latest_release()
+        update, err = self._fetch_latest_release()
         if update is not None:
             with self._lock:
                 self._update = update
             self._emit_state()
             return {"ok": True, "update": update}
+        if err is not None:
+            return {"ok": False, "error": err}
         return {"ok": True, "update": None}
 
     def _has_active_session(self) -> bool:
