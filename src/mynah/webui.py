@@ -7,6 +7,7 @@ gui.py remains available via --legacy-ui.
 from __future__ import annotations
 
 import logging
+import logging.handlers
 import sys
 from pathlib import Path
 
@@ -67,6 +68,47 @@ def _apply_windows_branding(window) -> None:
     window.events.shown += _set_icon
 
 
+class ScrubbedTimedFileHandler(logging.handlers.TimedRotatingFileHandler):
+    """Daily-rotating file log with the same anti-spoofing scrub as the
+    UI pane (issue #19) — but newline-preserving, so tracebacks stay
+    readable. Secrets never reach the logging layer in the first place;
+    this guards against control-char/bidi injection via Discord names.
+    """
+
+    def format(self, record: logging.LogRecord) -> str:
+        from .uicore import scrub_multiline
+
+        return scrub_multiline(super().format(record))
+
+
+def _attach_file_log(root_logger: logging.Logger) -> None:
+    """Best-effort on-disk log (issue #19): the console pane is lost on
+    close, which made 'paste the log into a bug report' impossible for
+    anything non-fatal. Rotates at midnight, keeps a week."""
+    from .config import log_dir
+
+    try:
+        path = log_dir()
+        path.mkdir(parents=True, exist_ok=True)
+        handler = ScrubbedTimedFileHandler(
+            str(path / "mynah.log"),
+            when="midnight",
+            backupCount=7,
+            encoding="utf-8",
+            delay=True,
+        )
+        handler.setFormatter(
+            logging.Formatter(
+                "%(asctime)s %(levelname)s %(name)s: %(message)s"
+            )
+        )
+        root_logger.addHandler(handler)
+    except OSError as e:
+        # Read-only install location or full disk — the app still works,
+        # diagnostics just stay in-pane like before.
+        log.warning("Could not open on-disk log: %s", e)
+
+
 def _wire_logging(backend: MynahBackend) -> None:
     """Make the frontend log pane THE log destination (mirrors
     gui._wire_logging): remove the bootstrap stderr handler so every
@@ -81,6 +123,7 @@ def _wire_logging(backend: MynahBackend) -> None:
         if not isinstance(h, WebLogHandler):
             root_logger.removeHandler(h)
     root_logger.addHandler(handler)
+    _attach_file_log(root_logger)
 
 
 def run() -> int:

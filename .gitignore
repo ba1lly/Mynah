@@ -6,6 +6,9 @@ config.json
 # User audio recordings and transcripts
 Recordings/
 
+# Rotating on-disk logs (issue #19)
+logs/
+
 # --- Build artifacts ---
 .venv/
 build/

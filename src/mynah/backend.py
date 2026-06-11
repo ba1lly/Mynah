@@ -885,6 +885,24 @@ class MynahBackend:
 
     # ---- JS API: misc ----
 
+    @staticmethod
+    def _open_folder(path: Path) -> dict:
+        """Open `path` in the OS file manager (shared by the recordings
+        and log folder buttons)."""
+        if not path.is_dir():
+            return {"ok": False, "error": f"Not a directory:\n{path}"}
+        try:
+            if sys.platform == "win32":
+                os.startfile(str(path))  # noqa: S606 (Windows-only intentional)
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", str(path)])
+            else:
+                subprocess.Popen(["xdg-open", str(path)])
+        except Exception as e:
+            log.warning("Could not open folder %s: %s", path, e)
+            return {"ok": False, "error": _scrub(str(e))}
+        return {"ok": True}
+
     def open_recordings_folder(self) -> dict:
         try:
             path = self._config.ensure_recordings_dir()
@@ -897,22 +915,22 @@ class MynahBackend:
                     f"{self._config.recordings_path}\n\n{_scrub(str(e))}"
                 ),
             }
-        if not path.is_dir():
+        return self._open_folder(path)
+
+    def open_log_folder(self) -> dict:
+        """Issue #19: one-click access to the on-disk logs."""
+        from .config import log_dir
+
+        path = log_dir()
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
             return {
                 "ok": False,
-                "error": f"Recordings folder is not a directory:\n{path}",
+                "error": f"Could not create log folder:\n{path}\n\n"
+                         f"{_scrub(str(e))}",
             }
-        try:
-            if sys.platform == "win32":
-                os.startfile(str(path))  # noqa: S606 (Windows-only intentional)
-            elif sys.platform == "darwin":
-                subprocess.Popen(["open", str(path)])
-            else:
-                subprocess.Popen(["xdg-open", str(path)])
-        except Exception as e:
-            log.warning("Could not open recordings folder: %s", e)
-            return {"ok": False, "error": _scrub(str(e))}
-        return {"ok": True}
+        return self._open_folder(path)
 
     def open_url(self, key: str) -> dict:
         url = _ALLOWED_URLS.get(key)

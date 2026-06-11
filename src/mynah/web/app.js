@@ -454,6 +454,10 @@ async function init() {
     const res = await api().open_recordings_folder();
     if (!res.ok) toast(res.error, "err");
   });
+  $("#btn-open-logs").addEventListener("click", async () => {
+    const res = await api().open_log_folder();
+    if (!res.ok) toast(res.error, "err");
+  });
   $("#btn-transcribe").addEventListener("click", doTranscribe);
   $("#btn-settings").addEventListener("click", openSettings);
   $("#btn-save-settings").addEventListener("click", saveSettings);

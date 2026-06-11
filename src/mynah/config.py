@@ -91,6 +91,16 @@ CONFIG_PATH = APP_ROOT / "config.json"
 DEFAULT_RECORDINGS_DIR = APP_ROOT / "Recordings"
 
 
+def log_dir() -> Path:
+    """Where the rotating on-disk logs live (issue #19).
+
+    Computed via app_root() per call (not the import-time APP_ROOT
+    constant) so the MYNAH_APP_ROOT override keeps working for tests
+    and the installer launcher.
+    """
+    return app_root() / "logs"
+
+
 def _scrub_and_backup_corrupted_config(
     src: Path, backup: Path, raw_text: Optional[str]
 ) -> None:
