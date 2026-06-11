@@ -1,6 +1,6 @@
 # Mynah
 
-> **Record Discord voice calls and transcribe them locally with accurate per-speaker labels — no bot, nothing leaves your machine.**
+> **Record Discord voice calls and transcribe them locally with accurate per-speaker labels, no bot, nothing leaves your machine.**
 
 ![Mynah](docs/screenshot.png)
 
