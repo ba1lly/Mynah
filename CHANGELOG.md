@@ -4,7 +4,7 @@ All notable changes to Mynah are documented here.
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] — 2026-06-11
 
 ### Added
 
@@ -98,6 +98,7 @@ First public release.
 - ~10 GB of disk for Python deps + Whisper weights; ~15 GB recommended.
 - Python 3.10–3.13 for dev mode; not needed for the `.exe` build.
 
+[1.2.0]: https://github.com/ba1lly/Mynah/releases/tag/v1.2.0
 [1.1.0]: https://github.com/ba1lly/Mynah/releases/tag/v1.1.0
 [1.0.1]: https://github.com/ba1lly/Mynah/releases/tag/v1.0.1
 [1.0.0]: https://github.com/ba1lly/Mynah/releases/tag/v1.0.0
