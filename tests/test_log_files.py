@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import pytest
-
 from mynah.config import log_dir
 from mynah.webui import ScrubbedTimedFileHandler
 
