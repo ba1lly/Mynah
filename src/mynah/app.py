@@ -141,26 +141,35 @@ def main() -> int:
         # In a frozen, windowed PyInstaller build there is no console for
         # stderr. Try to surface the error to the user via a native dialog
         # before exiting so they don't see the window just vanish.
+        if log_path is not None:
+            detail = f"Details written to:\n{log_path}"
+        else:
+            detail = (
+                "Could not write a crash log to disk "
+                "(no writable location available)."
+            )
+        message = f"{type(exc).__name__}: {exc}\n\n{detail}"
         try:
             import tkinter as tk
             from tkinter import messagebox
 
             root = tk.Tk()
             root.withdraw()
-            if log_path is not None:
-                detail = f"Details written to:\n{log_path}"
-            else:
-                detail = (
-                    "Could not write a crash log to disk "
-                    "(no writable location available)."
-                )
-            messagebox.showerror(
-                "Mynah — fatal error",
-                f"{type(exc).__name__}: {exc}\n\n{detail}",
-            )
+            messagebox.showerror("Mynah — fatal error", message)
             root.destroy()
         except Exception:
-            pass
+            # The bootstrap-installed runtime (issue #9) ships without
+            # tkinter — fall back to the Win32 message box so the user
+            # still sees *something* instead of a silently-vanished app.
+            if sys.platform == "win32":
+                try:
+                    import ctypes
+
+                    ctypes.windll.user32.MessageBoxW(
+                        None, message, "Mynah — fatal error", 0x10,  # MB_ICONERROR
+                    )
+                except Exception:
+                    pass
         return 1
 
 

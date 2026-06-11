@@ -87,9 +87,10 @@ mynah = "mynah.app:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-# Web UI assets must ship inside the wheel/editable install; the frozen
-# build bundles them separately via Mynah.spec datas.
-mynah = ["web/*"]
+# Web UI assets + icon must ship inside the wheel/editable install; the
+# frozen build bundles them separately via Mynah.spec datas. The icon is
+# also what the bootstrap installer's shortcuts point at.
+mynah = ["web/*", "assets/*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "mynah.__version__" }

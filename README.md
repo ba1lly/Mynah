@@ -10,11 +10,29 @@
 - **No bot joins the channel.** Mynah talks to your local Discord desktop client over a named pipe (the same one Spotify uses for "Listening to…"). Other participants see nothing.
 - **Ground-truth speaker labels.** Mynah subscribes to Discord's own per-user `SPEAKING_START` / `SPEAKING_STOP` events — so transcript labels are correct by definition, not by acoustic clustering. Heuristic diarization is the fallback, not the default.
 
-> Pre-built one-click `.exe` is on the roadmap — see [#9](https://github.com/ba1lly/Mynah/issues/9). For now the install is a single PowerShell command (below).
-
 ---
 
 ## Quick start (TL;DR)
+
+### Just want the app? One-click installer
+
+Download **`MynahSetup.exe`** from the
+[latest release](https://github.com/ba1lly/Mynah/releases/latest) and run
+it. No Python, Git, or PowerShell needed.
+
+- The installer itself is ~11 MB. On first run it downloads the ML stack
+  into `%LOCALAPPDATA%\Mynah` — ~2.5 GB with an NVIDIA GPU (it detects
+  your driver and picks CUDA or CPU builds automatically), less for
+  CPU-only.
+- If the connection drops mid-install, just run it again — it resumes
+  where it left off.
+- You get a Start Menu entry (and optional Desktop shortcut). To
+  uninstall, delete the install folder and the shortcuts — nothing else
+  is touched.
+
+Then do the 2-minute [Discord setup](#discord-setup) below.
+
+### Working on the code? Dev bootstrap
 
 ```powershell
 # Clone, enter the folder, run the bootstrap. The script creates the venv,
@@ -305,10 +323,15 @@ transcription and stay cached after that.
 
 ```
 .
-├── start.ps1                   # bootstrap: install + launch (idempotent)
+├── start.ps1                   # dev bootstrap: install + launch (idempotent)
 ├── run.py                      # raw dev launcher (no install checks)
-├── build.py                    # PyInstaller wrapper
-├── Mynah.spec        # PyInstaller spec (full build)
+├── build.py                    # PyInstaller wrapper (full ~4 GB build)
+├── Mynah.spec                  # PyInstaller spec (full build)
+├── installer/                  # MynahSetup.exe — the ~11 MB bootstrap installer
+│   ├── bootstrap.py            #   installer GUI
+│   ├── bootstrap_lib.py        #   GPU detect, resumable downloads, shortcuts
+│   ├── build_installer.py      #   wheel + PyInstaller onefile build
+│   └── MynahSetup.spec
 ├── pyproject.toml              # package metadata + deps
 ├── README.md
 └── src/mynah/
