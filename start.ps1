@@ -100,6 +100,9 @@ if (-not (Has-Module "imageio_ffmpeg")){ $baseNeeded += "imageio-ffmpeg>=0.5" }
 # wincred backend). Without this, secrets fall back to plaintext
 # config.json — the exact regression #14 was meant to close.
 if (-not (Has-Module "keyring"))       { $baseNeeded += "keyring>=24" }
+# Web UI (default since v1.0.1): pywebview renders src/mynah/web/ in
+# WebView2. Without it the app degrades to the legacy Tk UI.
+if (-not (Has-Module "webview"))       { $baseNeeded += "pywebview>=5.1" }
 
 if ($baseNeeded.Count -gt 0) {
     Write-Host ("Installing: " + ($baseNeeded -join ", "))

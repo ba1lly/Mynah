@@ -4,6 +4,30 @@ All notable changes to Mynah are documented here.
 This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] — 2026-06-11
+
+### Added
+
+- **New default UI** — a modern WebView2-based interface (pywebview) replaces
+  the Tkinter window as the default: light/dark/system theme toggle, live
+  recording timer, status LEDs, recordings list, streaming console pane, and
+  in-window settings/consent dialogs. The frontend lives in `src/mynah/web/`;
+  the Python side is split into `backend.py` (JS bridge / state machine) and
+  `webui.py` (window lifecycle). The legacy Tk UI remains available via
+  `--legacy-ui` and is the automatic fallback when pywebview or the WebView2
+  runtime is missing.
+- **`uicore.py`** — UI-toolkit-agnostic core (log scrubbing, atomic settings
+  apply, consent attestation, recordings indexing) shared by both UIs;
+  `gui.py` re-exports the original names so existing imports keep working.
+
+### Fixed
+
+- Silenced two benign-but-noisy startup warnings (#7): pyannote/torchcodec's
+  "torchcodec is not installed correctly" UserWarning (the decoder path is
+  dead code for Mynah) and Lightning's checkpoint auto-upgrade INFO on every
+  transcription. Both suppressions are narrowly scoped to the exact
+  message/logger.
+
 ## [1.0.0] — 2026-06-08
 
 First public release.
@@ -26,4 +50,5 @@ First public release.
 - ~10 GB of disk for Python deps + Whisper weights; ~15 GB recommended.
 - Python 3.10–3.13 for dev mode; not needed for the `.exe` build.
 
+[1.0.1]: https://github.com/ba1lly/Mynah/releases/tag/v1.0.1
 [1.0.0]: https://github.com/ba1lly/Mynah/releases/tag/v1.0.0

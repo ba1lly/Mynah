@@ -1,17 +1,15 @@
-"""Tkinter GUI for the Mynah."""
+"""Tkinter GUI for the Mynah (legacy UI \u2014 the default UI is the
+pywebview frontend in webui.py; launch this one with --legacy-ui)."""
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
-import re
 import subprocess
 import sys
 import threading
 import tkinter as tk
 import webbrowser
 from dataclasses import asdict
-from datetime import datetime, timezone
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Callable, Optional
@@ -22,136 +20,24 @@ from .recorder import RecordingResult, RecordingSession
 from .rpc import DiscordRPC, RpcError
 from .transcription import transcribe, whisperx_available
 
-log = logging.getLogger(__name__)
-
-
-# Strip ASCII control chars (except tab) and a small set of Unicode
-# directional-override characters from any string that gets routed through
-# the log widget or status labels. Discord display names and meeting names
-# can contain these and would otherwise let a malicious participant inject
-# fake log lines or visually mask paths.
-_BAD_LOG_CHARS = re.compile(
-    r"[\x00-\x08\x0b-\x1f\x7f"          # ASCII control chars (kept: tab)
-    r"\x80-\x9f"                         # C1 controls (NEL, etc.)
-    r"\u200b-\u200d"                     # zero-width space/non-joiner/joiner
-    r"\u200e\u200f"                      # LRM, RLM
-    r"\u2028\u2029"                      # LINE/PARAGRAPH SEPARATOR (Tk renders as newline)
-    r"\u202a-\u202e"                     # LRE, RLE, PDF, LRO, RLO
-    r"\u2060"                            # WORD JOINER
-    r"\u2066-\u2069"                     # LRI, RLI, FSI, PDI
-    r"\ufeff]"                           # zero-width no-break space / BOM
+# Shared UI-toolkit-agnostic logic lives in uicore; re-exported here under
+# the original names because tests (and possibly user tooling) import them
+# from mynah.gui.
+from .uicore import (  # noqa: F401  (re-exports)
+    _BAD_LOG_CHARS,
+    _CONSENT_FIELD_MAX,
+    CONSENT_DIALOG_SHA256,
+    CONSENT_DIALOG_TEXT,
+    CONSENT_DIALOG_VERSION,
+    _capped,
+    _scrub,
+    apply_settings_atomically,
+    build_consent_record,
+    format_recording_label,
+    index_recordings,
 )
 
-
-def _scrub(s: str) -> str:
-    """Make a string safe to render in the log widget without log spoofing."""
-    if not isinstance(s, str):
-        s = str(s)
-    return _BAD_LOG_CHARS.sub("?", s).replace("\r", " ").replace("\n", " ")
-
-
-_CONSENT_FIELD_MAX = 256
-
-
-def apply_settings_atomically(c: Config, new_values: dict):
-    """Apply new Settings values to `c` atomically with respect to
-    SecretWriteError.
-
-    extracted from `SettingsDialog._save` so the
-    rollback semantics are unit-testable without instantiating a Tk
-    Toplevel. The contract is:
-
-    - Snapshot the prior secret state (token, client_secret, hf_token).
-    - Attempt the secret writes in this order: token (if creds changed),
-      client_secret, hf_token. If any raises SecretWriteError, roll
-      back the writes that already committed (best-effort: a rollback
-      that itself raises is swallowed and logged) and return the
-      original exception.
-    - Only after all secret writes succeed, mutate the non-secret
-      fields (client_id, whisper_model, audio_source, recordings_dir).
-    - Returns None on success, the SecretWriteError instance on
-      secret-write failure. The caller handles the persistence
-      `c.save()` call and any UI dialogs.
-
-    The previous (non-extracted) flow mutated `discord_client_id` and
-    cleared the token BEFORE the secret writes that might fail, so a
-    partial failure left the dialog telling the user "Settings were
-    NOT saved" while the in-memory config carried the new client_id,
-    a deleted token, and a half-applied keyring state.
-    """
-    new_client_id = new_values["discord_client_id"]
-    new_secret = new_values["discord_client_secret"]
-    new_hf_token = new_values["hf_token"]
-    credentials_changed = (
-        new_client_id != c.discord_client_id
-        or new_secret != c.discord_client_secret
-    )
-    orig_secret = c.discord_client_secret
-    orig_hf_token = c.hf_token
-    orig_token = c.token
-    secret_writes_committed: list[str] = []
-    try:
-        if credentials_changed:
-            c.token = None
-            secret_writes_committed.append("token")
-        c.discord_client_secret = new_secret
-        secret_writes_committed.append("client_secret")
-        c.hf_token = new_hf_token
-        secret_writes_committed.append("hf_token")
-    except secrets_store.SecretWriteError as e:
-        for kind in reversed(secret_writes_committed):
-            try:
-                if kind == "hf_token":
-                    c.hf_token = orig_hf_token
-                elif kind == "client_secret":
-                    c.discord_client_secret = orig_secret
-                elif kind == "token" and orig_token is not None:
-                    c.token = orig_token
-            except secrets_store.SecretWriteError as rollback_err:
-                # the docstring promises
-                # "swallowed and logged"; previously this was silently
-                # swallowed without a log entry, leaving operators with
-                # no breadcrumb to diagnose a double-failure (primary
-                # write fails, rollback also fails). Matches the
-                # logging pattern at config.py's migration rollback.
-                log.warning(
-                    "apply_settings_atomically: rollback of %s failed "
-                    "(%s); credential store may be in an inconsistent "
-                    "state — manual cleanup via OS credential manager "
-                    "may be required.",
-                    kind,
-                    rollback_err,
-                )
-        return e
-    c.discord_client_id = new_client_id
-    c.whisper_model = new_values["whisper_model"]
-    c.audio_source = new_values["audio_source"]
-    c.recordings_dir = new_values["recordings_dir"]
-    c.loopback_device_name = new_values.get("loopback_device_name", "")
-    return None
-
-
-def _capped(value: object) -> Optional[str]:
-    """Length-cap an identity field before it lands in participants.json.
-
-    Returns None unchanged so the absence-vs-empty distinction the
-    consent audit trail relies on is preserved. Non-string truthy
-    values are coerced to str first because the Discord RPC identity
-    payload is contract-defined as a dict of strings, but a future
-    schema bump could deliver an int snowflake.
-
-    also strips bidi-override, zero-width, and
-    control characters via `_scrub()` BEFORE capping. Without that, a
-    malicious Discord display name containing `\\u202e` (right-to-left
-    override) or similar would land in `participants.json` and the
-    consent log line, corrupting the audit trail and enabling log
-    spoofing. Scrubbing first means the 256-char cap applies to the
-    post-scrub length, matching the displayed/logged form.
-    """
-    if value is None:
-        return None
-    s = value if isinstance(value, str) else str(value)
-    return _scrub(s)[:_CONSENT_FIELD_MAX]
+log = logging.getLogger(__name__)
 
 
 class TextHandler(logging.Handler):
@@ -854,26 +740,12 @@ class MainWindow:
             log_label="start recording",
         )
 
-    _CONSENT_DIALOG_TEXT = (
-        "This will record audio of every participant in the current "
-        "voice channel — your microphone AND Discord's system audio "
-        "(everyone else you can hear).\n\n"
-        "The recording is saved locally on this computer and is NOT "
-        "uploaded anywhere. You are responsible for obtaining consent "
-        "from the other participants before recording.\n\n"
-        "Continue?"
-    )
-    # when the dialog text is reworded, bump
-    # `_CONSENT_DIALOG_VERSION` so older participants.json entries
-    # remain unambiguously identifiable. The text-sha256 lets an
-    # auditor verify, byte-for-byte, that a recording's consent record
-    # references the exact dialog version that was shown at the time —
-    # the `dialog_text` field alone could be silently rewritten by a
-    # tool walking participants.json across versions.
-    _CONSENT_DIALOG_VERSION = "v1"
-    _CONSENT_DIALOG_SHA256 = hashlib.sha256(
-        _CONSENT_DIALOG_TEXT.encode("utf-8"),
-    ).hexdigest()
+    # Canonical text/version/sha live in uicore (shared with the web UI);
+    # aliased as class attributes for backwards compatibility with tests
+    # and tooling that reference them via MainWindow.
+    _CONSENT_DIALOG_TEXT = CONSENT_DIALOG_TEXT
+    _CONSENT_DIALOG_VERSION = CONSENT_DIALOG_VERSION
+    _CONSENT_DIALOG_SHA256 = CONSENT_DIALOG_SHA256
 
     def _collect_recording_consent(self) -> Optional[dict]:
         """Show the privacy consent dialog and return an attestation
@@ -897,32 +769,7 @@ class MainWindow:
             return None
 
         identity = getattr(self.rpc, "identity", None) or {}
-        # Length-cap identity fields before persistence: a Discord
-        # display name is user-controlled and reaches us via the RPC
-        # IPC channel. The legitimate values are tiny (snowflake IDs
-        # are ~20 digits; usernames cap at 32 chars per Discord's own
-        # limit) so 256 is a comfortable upper bound. Without this
-        # cap, a participant who chose a multi-megabyte display name
-        # would silently inflate every participants.json on disk.
-        granted_by_user_id = _capped(identity.get("id"))
-        granted_by_username = _capped(
-            identity.get("global_name") or identity.get("username")
-        )
-        record = {
-            "granted_at": datetime.now(timezone.utc).isoformat(
-                timespec="seconds",
-            ),
-            "granted_by_user_id": granted_by_user_id,
-            "granted_by_username": granted_by_username,
-            "dialog_text": self._CONSENT_DIALOG_TEXT,
-            "dialog_version": self._CONSENT_DIALOG_VERSION,
-            "dialog_sha256": self._CONSENT_DIALOG_SHA256,
-        }
-        log.info(
-            "Recording consent granted by %s (%s)",
-            record["granted_by_username"], record["granted_by_user_id"],
-        )
-        return record
+        return build_consent_record(identity)
 
     def _stop_recording(self) -> None:
         if not self.session:
@@ -971,35 +818,8 @@ class MainWindow:
     # ---- Recording-selector helpers ----
 
     def _format_recording_label(self, path: Path) -> str:
-        """Build a human-friendly display string for the dropdown.
-
-        Examples of the underlying filename:
-          MEP Landing Page Call_discord_20260528_003930_audio.wav
-          discord_20260525_210051_audio.wav  (no meeting name)
-
-        Result: "MEP Landing Page Call  —  2026-05-28 00:39"
-        """
-        stem = path.stem  # strip .wav
-        if stem.endswith("_audio"):
-            stem = stem[: -len("_audio")]
-        # Recorder names files one of:
-        #   "<meeting>_discord_YYYYMMDD_HHMMSS"   (custom meeting name)
-        #   "discord_YYYYMMDD_HHMMSS"             (no meeting name)
-        meeting = "Untitled"
-        ts_str = ""
-        if "_discord_" in stem:
-            head, _, ts_str = stem.rpartition("_discord_")
-            meeting = head or "Untitled"
-        elif stem.startswith("discord_"):
-            ts_str = stem[len("discord_"):]
-        else:
-            meeting = stem  # unrecognised pattern; fall back to whole stem
-
-        if len(ts_str) == 15 and ts_str[8] == "_" and ts_str[:8].isdigit():
-            ts_pretty = f"{ts_str[:4]}-{ts_str[4:6]}-{ts_str[6:8]} {ts_str[9:11]}:{ts_str[11:13]}"
-        else:
-            ts_pretty = ts_str or "?"
-        return f"{_scrub(meeting)}  —  {ts_pretty}"
+        """Build a human-friendly display string for the dropdown."""
+        return format_recording_label(path)
 
     def _refresh_recordings(self, select: Optional[Path] = None) -> None:
         """Re-scan the recordings folder and update the dropdown.
@@ -1007,35 +827,9 @@ class MainWindow:
         Newest first. If `select` is given, that path is pre-selected;
         otherwise the newest entry is selected.
         """
-        try:
-            wavs = sorted(
-                self.config.recordings_path.glob("*_audio.wav"),
-                key=lambda p: p.stat().st_mtime,
-                reverse=True,
-            )
-        except Exception as e:
-            log.warning("Could not list recordings: %s", e)
-            wavs = []
-
-        # Only show entries that have a participants.json next to them —
-        # otherwise transcription will immediately fail.
-        valid = [
-            p for p in wavs
-            if (p.parent / p.name.replace("_audio.wav", "_participants.json")).exists()
-        ]
-
-        labels: list[str] = []
-        self._recordings_index = {}
-        for p in valid:
-            label = self._format_recording_label(p)
-            # Disambiguate if two recordings somehow render to the same label
-            base = label
-            i = 2
-            while label in self._recordings_index:
-                label = f"{base} ({i})"
-                i += 1
-            self._recordings_index[label] = p
-            labels.append(label)
+        pairs = index_recordings(self.config.recordings_path)
+        self._recordings_index = dict(pairs)
+        labels = [label for label, _ in pairs]
 
         self.recording_pick["values"] = labels
         if not labels:

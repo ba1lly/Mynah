@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mynah</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<div class="grain" aria-hidden="true"></div>
+
+<!-- ======================= HEADER / TRANSPORT BAR ======================= -->
+<header class="topbar">
+  <div class="brand">
+    <svg class="brand-mark" viewBox="0 0 32 32" aria-hidden="true">
+      <rect x="1" y="1" width="30" height="30" rx="7" class="mark-bg"/>
+      <g class="mark-bars">
+        <rect x="7"  y="14" width="3" height="8"  rx="1.5"/>
+        <rect x="12" y="9"  width="3" height="13" rx="1.5"/>
+        <rect x="17" y="12" width="3" height="10" rx="1.5"/>
+        <rect x="22" y="16" width="3" height="6"  rx="1.5"/>
+      </g>
+      <circle cx="23.5" cy="9.5" r="2.5" class="mark-dot"/>
+    </svg>
+    <span class="brand-name">MYNAH</span>
+    <span class="brand-sub" id="version-tag"></span>
+  </div>
+
+  <div class="topbar-right">
+    <div class="led-cluster" role="status">
+      <span class="led-item"><span class="led" id="led-link"></span><span class="led-label">LINK</span></span>
+      <span class="led-item"><span class="led" id="led-rec"></span><span class="led-label">REC</span></span>
+    </div>
+    <button class="iconbtn" id="btn-theme" title="Theme: system">
+      <svg id="theme-icon-system" viewBox="0 0 20 20"><path d="M10 2a8 8 0 1 0 0 16 8 8 0 0 0 0-16Zm0 2v12a6 6 0 0 1 0-12Z"/></svg>
+      <svg id="theme-icon-light" viewBox="0 0 20 20" hidden><path d="M10 5.5a4.5 4.5 0 1 0 0 9 4.5 4.5 0 0 0 0-9ZM10 1v2.2M10 16.8V19M19 10h-2.2M3.2 10H1m14.4-6.4-1.6 1.6M6.2 13.8l-1.6 1.6m0-11.8 1.6 1.6m7.6 7.6 1.6 1.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      <svg id="theme-icon-dark" viewBox="0 0 20 20" hidden><path d="M17 11.5A7.5 7.5 0 0 1 8.5 3a7.5 7.5 0 1 0 8.5 8.5Z"/></svg>
+    </button>
+    <button class="iconbtn" id="btn-settings" title="Settings">
+      <svg viewBox="0 0 20 20"><path d="M8.3 1.8h3.4l.5 2.2 1.9 1.1 2.1-.8 1.7 3-1.6 1.5v2.4l1.6 1.5-1.7 3-2.1-.8-1.9 1.1-.5 2.2H8.3l-.5-2.2-1.9-1.1-2.1.8-1.7-3 1.6-1.5V8.8L2.1 7.3l1.7-3 2.1.8 1.9-1.1.5-2.2ZM10 7.2a2.8 2.8 0 1 0 0 5.6 2.8 2.8 0 0 0 0-5.6Z"/></svg>
+    </button>
+  </div>
+</header>
+
+<!-- ============================== MAIN ================================= -->
+<main class="layout">
+
+  <!-- left column: the deck -->
+  <section class="col-deck">
+
+    <div class="card" id="card-link">
+      <div class="card-head">
+        <h2>TRANSPORT</h2>
+        <span class="rule"></span>
+      </div>
+      <div class="link-row">
+        <button class="btn btn-primary" id="btn-connect">Connect to Discord</button>
+        <button class="btn btn-ghost" id="btn-refresh-parts" disabled>Refresh</button>
+      </div>
+      <div class="link-status" id="link-status">Discord RPC: not connected</div>
+      <div class="participants" id="participants">
+        <span class="hint">Connect, then join a voice channel.</span>
+      </div>
+    </div>
+
+    <div class="card card-deck" id="card-rec">
+      <div class="card-head">
+        <h2>RECORDER</h2>
+        <span class="rule"></span>
+        <span class="onair" id="onair" hidden>ON&nbsp;AIR</span>
+      </div>
+
+      <label class="field-label" for="meeting-name">Meeting name <span class="opt">optional</span></label>
+      <input class="input" id="meeting-name" type="text" autocomplete="off" spellcheck="false"
+             placeholder="e.g. Q2 metrics review">
+
+      <div class="counter" id="counter">00:00:00</div>
+
+      <div class="vu" id="vu" aria-hidden="true">
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+        <i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i>
+      </div>
+
+      <div class="deck-controls">
+        <button class="recbtn" id="btn-rec" disabled title="Start recording">
+          <span class="recbtn-core"></span>
+        </button>
+        <button class="stopbtn" id="btn-stop" disabled title="Stop recording">
+          <span class="stopbtn-core"></span>
+        </button>
+        <div class="deck-status" id="deck-status">Idle</div>
+      </div>
+    </div>
+
+  </section>
+
+  <!-- right column: archive + console -->
+  <section class="col-side">
+
+    <div class="card" id="card-archive">
+      <div class="card-head">
+        <h2>ARCHIVE</h2>
+        <span class="rule"></span>
+        <button class="iconbtn sm" id="btn-refresh-recs" title="Rescan recordings">
+          <svg viewBox="0 0 20 20"><path d="M16.2 10a6.2 6.2 0 1 1-1.8-4.4M16.5 2.5v3.8h-3.8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button class="iconbtn sm" id="btn-open-folder" title="Open recordings folder">
+          <svg viewBox="0 0 20 20"><path d="M2.5 5A1.5 1.5 0 0 1 4 3.5h4l1.6 2H16A1.5 1.5 0 0 1 17.5 7v7A1.5 1.5 0 0 1 16 15.5H4A1.5 1.5 0 0 1 2.5 14V5Z" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+        </button>
+      </div>
+      <div class="rec-list" id="rec-list">
+        <div class="hint pad">No recordings yet.</div>
+      </div>
+      <div class="archive-foot">
+        <span class="hint" id="tx-hint"></span>
+        <button class="btn btn-accent" id="btn-transcribe" disabled>Transcribe selected</button>
+      </div>
+    </div>
+
+    <div class="card card-console" id="card-console">
+      <div class="card-head">
+        <h2>CONSOLE</h2>
+        <span class="rule"></span>
+      </div>
+      <div class="log" id="log" aria-live="polite"></div>
+    </div>
+
+  </section>
+</main>
+
+<!-- ============================ STATUS BAR ============================= -->
+<footer class="statusbar">
+  <span id="statusbar-text">Ready</span>
+  <span class="statusbar-right">local · nothing leaves this machine</span>
+</footer>
+
+<!-- ============================== MODALS =============================== -->
+<div class="overlay" id="overlay-settings" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <div class="modal-head">
+      <h3 id="settings-title">SETTINGS</h3>
+      <button class="iconbtn sm" data-close="overlay-settings" title="Close">
+        <svg viewBox="0 0 20 20"><path d="m5 5 10 10M15 5 5 15" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-section">
+        <div class="form-section-title">
+          Discord application
+          <a href="#" id="link-portal">Open Developer Portal ↗</a>
+        </div>
+        <label class="field-label" for="set-client-id">Client ID</label>
+        <input class="input" id="set-client-id" type="text" autocomplete="off" spellcheck="false">
+        <label class="field-label" for="set-client-secret">Client Secret</label>
+        <input class="input" id="set-client-secret" type="password" autocomplete="off">
+      </div>
+      <div class="form-section">
+        <div class="form-section-title">Transcription</div>
+        <label class="field-label" for="set-hf-token">HF token <span class="opt">only for non-Discord diarization</span></label>
+        <input class="input" id="set-hf-token" type="password" autocomplete="off">
+        <label class="field-label" for="set-model">Whisper model</label>
+        <select class="input" id="set-model"></select>
+      </div>
+      <div class="form-section">
+        <div class="form-section-title">Audio</div>
+        <label class="field-label" for="set-source">Audio source</label>
+        <select class="input" id="set-source"></select>
+        <label class="field-label" for="set-loopback">Loopback device</label>
+        <select class="input" id="set-loopback"></select>
+      </div>
+      <div class="form-section">
+        <div class="form-section-title">Storage</div>
+        <label class="field-label" for="set-recdir">Recordings folder</label>
+        <div class="dir-row">
+          <input class="input" id="set-recdir" type="text" spellcheck="false">
+          <button class="btn btn-ghost" id="btn-pick-dir">Browse…</button>
+        </div>
+      </div>
+      <div class="form-error" id="settings-error" hidden></div>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" data-close="overlay-settings">Cancel</button>
+      <button class="btn btn-primary" id="btn-save-settings">Save</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay-consent" hidden>
+  <div class="modal modal-narrow" role="dialog" aria-modal="true" aria-labelledby="consent-title">
+    <div class="modal-head warn">
+      <h3 id="consent-title">RECORDING CONSENT</h3>
+    </div>
+    <div class="modal-body">
+      <p class="consent-text" id="consent-text"></p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" id="btn-consent-no">Cancel</button>
+      <button class="btn btn-rec" id="btn-consent-yes">● Start recording</button>
+    </div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay-close" hidden>
+  <div class="modal modal-narrow" role="dialog" aria-modal="true" aria-labelledby="close-title">
+    <div class="modal-head danger">
+      <h3 id="close-title">RECORDING IN PROGRESS</h3>
+    </div>
+    <div class="modal-body">
+      <p>A recording is still running.<br>Closing now will end it and save what was captured. Proceed?</p>
+    </div>
+    <div class="modal-foot">
+      <button class="btn btn-ghost" id="btn-close-no">Keep recording</button>
+      <button class="btn btn-rec" id="btn-close-yes">Stop &amp; quit</button>
+    </div>
+  </div>
+</div>
+
+<div class="toasts" id="toasts"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
