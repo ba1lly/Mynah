@@ -59,33 +59,82 @@ def _write_crash_log(exc: BaseException) -> Optional[Path]:
     return None
 
 
+def _silence_known_benign_warnings() -> None:
+    """Issue #7: suppress two cosmetic warnings from bundled ML deps.
+
+    torchcodec is pyannote's *optional* audio decoder; our pipeline never
+    feeds pyannote a file path that needs decoding (audio is pre-loaded
+    via soundfile / whisperx's loader), so the failing-DLL warning it
+    emits 4x at import time is dead-code noise. The filter is scoped to
+    that exact message so new, unrelated UserWarnings still surface.
+
+    (The companion suppression — Lightning's checkpoint auto-upgrade
+    INFO — lives in transcription.py next to whisperx.load_model.)
+    """
+    import warnings
+
+    warnings.filterwarnings(
+        "ignore",
+        message=r"torchcodec is not installed correctly",
+        category=UserWarning,
+    )
+
+
+def _run_legacy_tk_ui() -> int:
+    import tkinter as tk
+
+    from .gui import MainWindow
+
+    root = tk.Tk()
+    try:
+        from tkinter import ttk
+
+        ttk.Style().theme_use("vista")
+    except tk.TclError:
+        # Non-Windows or older Tk — fall back to whatever's default.
+        pass
+    MainWindow(root)
+    root.mainloop()
+    return 0
+
+
 def main() -> int:
-    # Bare-minimum logging until the GUI installs its TextHandler. The GUI
+    # Bare-minimum logging until the UI installs its log handler. The UI
     # then removes other handlers, so this only matters for messages emitted
-    # during MainWindow construction and for diagnostic logs in frozen
-    # builds where stderr is discarded.
+    # during startup and for diagnostic logs in frozen builds where stderr
+    # is discarded.
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
         datefmt="%H:%M:%S",
     )
+    _silence_known_benign_warnings()
 
     try:
-        import tkinter as tk
+        if "--legacy-ui" in sys.argv[1:]:
+            return _run_legacy_tk_ui()
 
-        from .gui import MainWindow
-
-        root = tk.Tk()
         try:
-            from tkinter import ttk
+            from .webui import run as run_webui
 
-            ttk.Style().theme_use("vista")
-        except tk.TclError:
-            # Non-Windows or older Tk — fall back to whatever's default.
-            pass
-        MainWindow(root)
-        root.mainloop()
-        return 0
+            return run_webui()
+        except ImportError as e:
+            # pywebview not installed (stale venv). The Tk UI needs nothing
+            # beyond the stdlib, so degrade instead of dying.
+            logging.warning(
+                "Web UI unavailable (%s); falling back to legacy Tk UI. "
+                "Run start.ps1 to install pywebview.", e,
+            )
+            return _run_legacy_tk_ui()
+        except Exception as e:
+            # Most likely: WebView2 runtime genuinely absent, so the
+            # edgechromium backend refused to start. Same degrade path.
+            logging.warning(
+                "Web UI failed to start (%s); falling back to legacy Tk UI. "
+                "Install the Microsoft Edge WebView2 runtime for the new UI.",
+                e,
+            )
+            return _run_legacy_tk_ui()
     except BaseException as exc:  # noqa: BLE001
         logging.exception("Fatal error in main()")
         log_path = _write_crash_log(exc)

@@ -31,6 +31,12 @@ _critical_packages = [
     "faster_whisper",
     "scipy",
     "soundfile",
+    # Web UI: pywebview (importable name `webview`) and its .NET bridge.
+    # Without these the frozen exe silently falls back to the legacy Tk
+    # UI on every launch. pythonnet's `clr` module is handled by the
+    # pyinstaller-hooks-contrib hook that ships with PyInstaller.
+    "webview",
+    "clr_loader",
 ]
 
 # Packages that are nice-to-have for transitive imports but the app can
@@ -62,7 +68,11 @@ _optional_packages = [
     "llvmlite",
 ]
 
-datas: list = []
+datas: list = [
+    # Web UI assets, resolved at runtime as Path(webui.__file__).parent/"web"
+    # — placing them under mynah/web keeps dev and frozen layouts identical.
+    ("src/mynah/web", "mynah/web"),
+]
 binaries: list = []
 hiddenimports: list = [
     "win32file",
@@ -104,6 +114,8 @@ for pkg in _optional_packages:
 # (we don't need their code to actually load — transformers handles failures
 # gracefully *after* it can read the version).
 _metadata_only = [
+    "pywebview",
+    "pythonnet",
     "torchcodec",
     "torch",
     "torchaudio",

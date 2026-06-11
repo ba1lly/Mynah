@@ -26,6 +26,10 @@ dependencies = [
     # secret silently falls back to plaintext config.json, defeating
     # the #14 security goal.
     "keyring>=24,<27",
+    # Web UI (default since v1.0.1): renders src/mynah/web/ in the OS
+    # webview (WebView2 on Windows) with backend.py as the JS bridge.
+    # pywebview pulls pythonnet/clr-loader on Windows automatically.
+    "pywebview>=5.1",
 ]
 
 [project.optional-dependencies]
@@ -81,6 +85,11 @@ mynah = "mynah.app:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# Web UI assets must ship inside the wheel/editable install; the frozen
+# build bundles them separately via Mynah.spec datas.
+mynah = ["web/*"]
 
 [tool.setuptools.dynamic]
 version = { attr = "mynah.__version__" }

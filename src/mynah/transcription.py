@@ -870,6 +870,13 @@ def transcribe(
     _p(f"Loading Whisper model {model_name}…")
     device = "cuda" if torch.cuda.is_available() else "cpu"
     compute_type = "float16" if device == "cuda" else "float32"
+    # Lightning auto-upgrades whisperx's bundled v1.5.4 checkpoint in memory
+    # on every load and logs an INFO suggesting `upgrade_checkpoint`, which
+    # fails on torch 2.6+ weights_only semantics (issue #7). Remove this
+    # suppression when a whisperx bump (#4) ships a refreshed checkpoint.
+    logging.getLogger(
+        "lightning.pytorch.utilities.migration.utils"
+    ).setLevel(logging.ERROR)
     model = whisperx.load_model(model_name, device=device, compute_type=compute_type)
     diarize_model = None
 
