@@ -62,9 +62,14 @@ def _asset(name: str) -> Path:
 
 
 class InstallerWindow:
-    def __init__(self, root: tk.Tk):
+    def __init__(self, root: tk.Tk, update_target: Path | None = None):
         self.root = root
-        root.title(APP_TITLE)
+        # --update mode: launched by the running app's "Update now". The
+        # target dir is fixed, the install auto-starts (after a beat so
+        # the app finishes exiting), and on success Mynah relaunches
+        # instead of a "go launch it" dialog.
+        self._update_mode = update_target is not None
+        root.title("Mynah Update" if self._update_mode else APP_TITLE)
         root.geometry("660x540")
         root.resizable(False, False)
         root.configure(bg=BG)
@@ -205,6 +210,18 @@ class InstallerWindow:
         self._log_queue: deque[tuple[str, str]] = deque()
         self.root.after(100, self._drain_log)
         self._refresh_existing()
+
+        if self._update_mode:
+            self.dir_var.set(str(update_target))
+            self.dir_entry.configure(state=tk.DISABLED)
+            self.browse_btn.configure(state=tk.DISABLED)
+            # Don't create a Desktop shortcut the user may have removed;
+            # the Start Menu one is refreshed by the launcher step.
+            self.desktop_var.set(False)
+            self._log("[update] applying update — Mynah restarts when done")
+            # Auto-start after a beat so the app that launched us has
+            # fully exited (its pip-installed files must not be in use).
+            self.root.after(1500, self._start)
 
     # ---- pre-flight detection ----
 
@@ -372,6 +389,29 @@ class InstallerWindow:
 
     def _finished(self) -> None:
         self._log("install complete", "ok")
+        if self._update_mode:
+            # Relaunch the freshly-updated app and get out of the way.
+            import subprocess
+
+            install_dir = Path(self.dir_var.get())
+            try:
+                subprocess.Popen(
+                    [
+                        str(install_dir / "python" / "pythonw.exe"),
+                        str(install_dir / lib.LAUNCHER_NAME),
+                    ],
+                    cwd=str(install_dir),
+                    close_fds=True,
+                    creationflags=getattr(subprocess, "DETACHED_PROCESS", 0),
+                )
+            except OSError as e:
+                messagebox.showerror(
+                    "Mynah Update",
+                    f"Update applied, but Mynah could not be relaunched:\n"
+                    f"{e}\n\nStart it from the Start Menu.",
+                )
+            self.root.destroy()
+            return
         # Re-enables the dir/browse controls and relabels the button via
         # _refresh_existing (VERIFY / REPAIR on a complete install).
         self._reset_button()
@@ -568,8 +608,27 @@ def main() -> int:
             return 2
         return run_uninstall(target)
 
+    update_target: Path | None = None
+    if "--update" in sys.argv:
+        idx = sys.argv.index("--update")
+        if idx + 1 >= len(sys.argv):
+            print("--update requires an install dir", file=sys.stderr)
+            return 2
+        update_target = Path(sys.argv[idx + 1])
+        if not lib.looks_like_install(update_target):
+            # Same refusal as --uninstall: never operate on an arbitrary
+            # folder handed to us on the command line.
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror(
+                "Mynah Update",
+                f"This folder does not look like a Mynah installation:\n"
+                f"{update_target}",
+            )
+            return 2
+
     root = tk.Tk()
-    InstallerWindow(root)
+    InstallerWindow(root, update_target=update_target)
     root.mainloop()
     return 0
 

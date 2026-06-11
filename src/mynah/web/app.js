@@ -54,6 +54,26 @@ function handleEvent(event, payload) {
     case "transcribed":
       toast(`Transcript saved:\n${payload.path}`, "ok", 12000);
       break;
+    case "update-progress": {
+      const bar = $("#update-progress-bar");
+      const text = $("#update-progress-text");
+      if (payload.total) {
+        const pct = Math.min(100, (payload.done / payload.total) * 100);
+        bar.style.width = `${pct}%`;
+        text.textContent =
+          `Downloading update… ${(payload.done / 1e6).toFixed(1)} / ` +
+          `${(payload.total / 1e6).toFixed(1)} MB`;
+      } else {
+        text.textContent =
+          `Downloading update… ${(payload.done / 1e6).toFixed(1)} MB`;
+      }
+      break;
+    }
+    case "update-restarting":
+      $("#update-progress-bar").style.width = "100%";
+      $("#update-progress-text").textContent =
+        "Verified. Restarting Mynah to apply the update…";
+      break;
   }
 }
 
@@ -163,7 +183,27 @@ function openUpdateModal() {
     `Mynah v${ui.update.version} is available — you have v${ui.state.version}.`;
   $("#update-notes").textContent =
     ui.update.notes || "(no release notes provided)";
+  // One-click update only for installer-based copies with a verifiable
+  // installer asset on the release; otherwise the manual download page.
+  $("#btn-update-now").hidden = !ui.update.canAutoUpdate;
+  $("#btn-get-update").hidden = !!ui.update.canAutoUpdate;
+  $("#update-progress").hidden = true;
+  $("#update-progress-bar").style.width = "0%";
+  $("#btn-update-now").disabled = false;
   $("#overlay-update").hidden = false;
+}
+
+async function doUpdateNow() {
+  const btn = $("#btn-update-now");
+  btn.disabled = true;
+  const res = await api().start_update();
+  if (!res.ok) {
+    btn.disabled = false;
+    toast(res.error, "err");
+    return;
+  }
+  // Backend streams update-progress events, then the app restarts itself.
+  $("#update-progress").hidden = false;
 }
 
 function renderRecordings(s) {
@@ -432,6 +472,7 @@ async function init() {
     api().open_url("latest_release");
     $("#overlay-update").hidden = true;
   });
+  $("#btn-update-now").addEventListener("click", doUpdateNow);
   $("#btn-check-updates").addEventListener("click", async () => {
     const btn = $("#btn-check-updates");
     btn.disabled = true;
