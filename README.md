@@ -1,3 +1,5 @@
+
+
 # Mynah
 
 > **Record Discord voice calls and transcribe them locally with accurate per-speaker labels — no bot, nothing leaves your machine.**
@@ -306,6 +308,7 @@ That produces:
 ```
 <repo>\dist\Mynah\Mynah.exe
 ```
+The build also generates `SBOM.json` (CycloneDX 1.5) and `DLL_MANIFEST.json` in the same folder for supply-chain auditing.
 
 - Build time: ~10 min (PyInstaller has to package torch + CUDA DLLs).
 - Folder size: ~4 GB. The `.exe` is small — the bulk is sibling DLLs.
