@@ -309,6 +309,12 @@ That produces:
 
 - Build time: ~10 min (PyInstaller has to package torch + CUDA DLLs).
 - Folder size: ~4 GB. The `.exe` is small — the bulk is sibling DLLs.
+- Alongside the `.exe` you also get `SBOM.json` (CycloneDX 1.5) and
+  `DLL_MANIFEST.json` — a full inventory of the Python dependencies and
+  the bundled native binaries, so the 4 GB of DLLs can actually be
+  audited rather than taken on trust. Regenerate either against an
+  existing `dist/` without a full rebuild:
+  `python build.py --sbom-only` or `python build.py --dll-manifest-only`.
 - Move/copy the whole `Mynah` folder anywhere (e.g.
   `C:\Apps\Mynah\`), then right-click `Mynah.exe` →
   **Create shortcut** → drag to Desktop or pin to Taskbar.
